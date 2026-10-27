@@ -3,6 +3,7 @@
 
 #include "Actors/Agent.h"
 #include "Components/SphereComponent.h"
+#include "Both/CharacterAnimation.h"
 #include "../AM_2610.h"
 
 AAgent::AAgent()
