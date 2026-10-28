@@ -523,7 +523,7 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
     UArrowComponent* EnemySpawn = FindEnemySpawnPoint(Hallway);
     const FName EnemyType = FindEnemyTypeForSpawnPoint(EnemySpawn);
 
-    // Do not spawn a puzzle only Angel from a hallway marker.
+    // Do not spawn a puzzle-only Angel from a hallway marker.
     if (!WeepingAngelEnemyTag.IsNone() && EnemyType == WeepingAngelEnemyTag)
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: Weeping Angels can only spawn in puzzle rooms, not enemy hallways."));
@@ -538,17 +538,10 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
         return false;
     }
 
-    // Only the Chaser waits. The maze can finish while its timer is pending.
-    if (!bSpawnImmediately && EnemyType == ChaserEnemyTag && ChaserSpawnDelay > 0.0f)
+    // Prepare the Chaser's entry trigger without starting its countdown during generation.
+    if (!bSpawnImmediately && EnemyType == ChaserEnemyTag)
     {
-        if (!GetWorld()->GetTimerManager().IsTimerActive(ChaserSpawnTimer))
-        {
-            FTimerDelegate SpawnDelegate;
-            SpawnDelegate.BindUObject(this, &AMazeGenerator::SpawnDelayedChaser, HallwayIndex);
-            GetWorld()->GetTimerManager().SetTimer(ChaserSpawnTimer, SpawnDelegate, ChaserSpawnDelay, false);
-        }
-
-        return true;
+        return PrepareChaserSpawnTrigger(HallwayIndex);
     }
 
     FActorSpawnParameters SpawnParameters;
@@ -592,9 +585,142 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
     return true;
 }
 
+bool AMazeGenerator::PrepareChaserSpawnTrigger(int32 HallwayIndex)
+{
+    if (!SpawnedEnemyHallwayActors.IsValidIndex(HallwayIndex) || !SpawnedEnemies.IsValidIndex(HallwayIndex) || ChaserSpawnTriggerTag.IsNone())
+    {
+        return false;
+    }
+
+    AMazeActors* Hallway = SpawnedEnemyHallwayActors[HallwayIndex];
+
+    if (!IsValid(Hallway))
+    {
+        return false;
+    }
+
+    if (ChaserSpawnTrigger.IsValid())
+    {
+        return ChaserSpawnHallwayIndex == HallwayIndex;
+    }
+
+    TArray<UBoxComponent*> Boxes;
+    Hallway->GetComponents<UBoxComponent>(Boxes);
+    UBoxComponent* Trigger = nullptr;
+
+    for (UBoxComponent* Box : Boxes)
+    {
+        if (!IsValid(Box) || !Box->ComponentHasTag(ChaserSpawnTriggerTag))
+        {
+            continue;
+        }
+
+        if (Trigger || Box->ComponentHasTag(TEXT("MazeBounds")) || Box->ComponentHasTag(TEXT("RoomArrival")))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Maze: %s needs exactly one separate box tagged %s. Do not reuse MazeBounds or RoomArrival."), *Hallway->GetName(), *ChaserSpawnTriggerTag.ToString());
+            return false;
+        }
+
+        Trigger = Box;
+    }
+
+    if (!IsValid(Trigger))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Maze: %s needs a Box Collision component tagged %s to start the Chaser countdown."), *Hallway->GetName(), *ChaserSpawnTriggerTag.ToString());
+        return false;
+    }
+
+    ClearChaserSpawnTrigger();
+    ChaserSpawnTrigger = Trigger;
+    ChaserSpawnHallwayIndex = HallwayIndex;
+
+    // Keep the trigger inactive until the entire layout has been accepted.
+    Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Trigger->SetCollisionResponseToAllChannels(ECR_Ignore);
+    Trigger->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+    Trigger->SetGenerateOverlapEvents(true);
+    Trigger->SetCanEverAffectNavigation(false);
+    Trigger->OnComponentBeginOverlap.AddUniqueDynamic(this, &AMazeGenerator::OnChaserSpawnTriggerBeginOverlap);
+    return true;
+}
+
+void AMazeGenerator::EnableChaserSpawnTrigger()
+{
+    UBoxComponent* Trigger = ChaserSpawnTrigger.Get();
+
+    if (LoopState != EMazeLoopState::TraversingMaze || !IsValid(Trigger) || bChaserCountdownStarted)
+    {
+        return;
+    }
+
+    Trigger->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+
+    // Also handle a player already inside when the accepted trigger becomes active.
+    TArray<AActor*> OverlappingActors;
+    Trigger->GetOverlappingActors(OverlappingActors, APawn::StaticClass());
+
+    for (AActor* Actor : OverlappingActors)
+    {
+        OnChaserSpawnTriggerBeginOverlap(Trigger, Actor, nullptr, INDEX_NONE, false, FHitResult());
+    }
+}
+
+void AMazeGenerator::OnChaserSpawnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    APawn* Player = Cast<APawn>(OtherActor);
+
+    if (!GetWorld() || LoopState != EMazeLoopState::TraversingMaze || !IsValid(OverlappedComponent) || OverlappedComponent != ChaserSpawnTrigger.Get() || !IsValid(Player) || !Player->IsPlayerControlled() || bChaserCountdownStarted || !SpawnedEnemyHallwayActors.IsValidIndex(ChaserSpawnHallwayIndex) || !SpawnedEnemies.IsValidIndex(ChaserSpawnHallwayIndex))
+    {
+        return;
+    }
+
+    AMazeActors* Hallway = SpawnedEnemyHallwayActors[ChaserSpawnHallwayIndex];
+
+    if (!IsValid(Hallway) || OverlappedComponent->GetOwner() != Hallway || IsValid(SpawnedEnemies[ChaserSpawnHallwayIndex]) || FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Hallway)) != ChaserEnemyTag)
+    {
+        return;
+    }
+
+    bChaserCountdownStarted = true;
+    UBoxComponent* Trigger = ChaserSpawnTrigger.Get();
+    Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &AMazeGenerator::OnChaserSpawnTriggerBeginOverlap);
+    Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    UE_LOG(LogTemp, Display, TEXT("Maze: Player entered the Chaser hallway. Starting the %.2f second spawn delay."), FMath::Max(0.0f, ChaserSpawnDelay));
+
+    if (ChaserSpawnDelay > 0.0f)
+    {
+        FTimerDelegate SpawnDelegate;
+        SpawnDelegate.BindUObject(this, &AMazeGenerator::SpawnDelayedChaser, ChaserSpawnHallwayIndex);
+        GetWorld()->GetTimerManager().SetTimer(ChaserSpawnTimer, SpawnDelegate, ChaserSpawnDelay, false);
+    }
+    else
+    {
+        SpawnDelayedChaser(ChaserSpawnHallwayIndex);
+    }
+}
+
+void AMazeGenerator::ClearChaserSpawnTrigger()
+{
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(ChaserSpawnTimer);
+    }
+
+    if (UBoxComponent* Trigger = ChaserSpawnTrigger.Get())
+    {
+        Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &AMazeGenerator::OnChaserSpawnTriggerBeginOverlap);
+        Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+
+    ChaserSpawnTrigger.Reset();
+    ChaserSpawnHallwayIndex = INDEX_NONE;
+    bChaserCountdownStarted = false;
+}
+
 void AMazeGenerator::SpawnDelayedChaser(int32 HallwayIndex)
 {
-    if (!GetWorld() || !SpawnedEnemyHallwayActors.IsValidIndex(HallwayIndex) || FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(SpawnedEnemyHallwayActors[HallwayIndex])) != ChaserEnemyTag)
+    if (!GetWorld() || LoopState != EMazeLoopState::TraversingMaze || !bChaserCountdownStarted || HallwayIndex != ChaserSpawnHallwayIndex || !SpawnedEnemyHallwayActors.IsValidIndex(HallwayIndex) || !SpawnedEnemies.IsValidIndex(HallwayIndex) || FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(SpawnedEnemyHallwayActors[HallwayIndex])) != ChaserEnemyTag)
     {
         return;
     }
@@ -774,11 +900,8 @@ void AMazeGenerator::ClearGeneratedLayout()
 {
     CancelGeneration();
 
-    // A cleared or rebuilt hallway must not spawn an old Chaser later.
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChaserSpawnTimer);
-    }
+    // A cleared or rebuilt hallway must not keep an old trigger or spawn timer.
+    ClearChaserSpawnTrigger();
 
     ClearPendingArrival();
 
@@ -2016,10 +2139,7 @@ void AMazeGenerator::BeginGenerationCleanup(bool bRetry)
         UE_LOG(LogTemp, Warning, TEXT("Maze: Attempt %d/%d failed at %s. Puzzle: %s. Hallways: %d/%d. Route rooms: %d."), GenerationAttempt, GenerationAttemptLimit, StageNames[StageIndex], *ActivePuzzleId.ToString(), GenerationHallwayIndex, GenerationHallwayCount, GenerationRouteRoomCount);
     }
 
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChaserSpawnTimer);
-    }
+    ClearChaserSpawnTrigger();
 
     ClearPendingArrival();
 
@@ -2407,15 +2527,15 @@ void AMazeGenerator::StepGeneration()
 
     case EGenerationStage::Complete:
     {
-        // A scheduled Chaser counts as ready without delaying the maze's doors.
-        const bool bChaserPending = GetWorld()->GetTimerManager().IsTimerActive(ChaserSpawnTimer);
+        // A Chaser waiting for player entry counts as ready without starting its timer.
+        const bool bChaserPending = ChaserSpawnTrigger.IsValid() && SpawnedEnemyHallwayActors.IsValidIndex(ChaserSpawnHallwayIndex);
         bool bAllEnemiesValid = SpawnedEnemies.Num() == GenerationEnemyTypes.Num() && SpawnedEnemyHallwayActors.Num() == GenerationEnemyTypes.Num();
 
         for (int32 Index = 0; Index < SpawnedEnemyHallwayActors.Num(); ++Index)
         {
             AMazeActors* Hallway = SpawnedEnemyHallwayActors[Index];
             const FName EnemyType = FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Hallway));
-            const bool bEnemyReady = SpawnedEnemies.IsValidIndex(Index) && (IsValid(SpawnedEnemies[Index]) || (bChaserPending && EnemyType == ChaserEnemyTag));
+            const bool bEnemyReady = SpawnedEnemies.IsValidIndex(Index) && (IsValid(SpawnedEnemies[Index]) || (bChaserPending && Index == ChaserSpawnHallwayIndex && EnemyType == ChaserEnemyTag));
 
             if (!IsValid(Hallway) || EnemyType.IsNone() || !GenerationEnemyTypes.Contains(EnemyType) || !bEnemyReady)
             {
@@ -2672,6 +2792,8 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
 
         LoopState = EMazeLoopState::TraversingMaze;
 
+        EnableChaserSpawnTrigger();
+
         if (UMazePuzzleComponent* Puzzle = GetPuzzleComponent())
         {
             Puzzle->ArmPuzzle();
@@ -2733,10 +2855,7 @@ void AMazeGenerator::CancelGeneration()
 
 void AMazeGenerator::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-    if (GetWorld())
-    {
-        GetWorld()->GetTimerManager().ClearTimer(ChaserSpawnTimer);
-    }
+    ClearChaserSpawnTrigger();
 
     CancelGeneration();
 

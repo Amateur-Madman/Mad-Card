@@ -267,7 +267,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles", meta = (ClampMin = "1", ClampMax = "20"))
     int32 HallwaysAfterPuzzle = 3;
 
-    // Puzzle only enemy type. Keep its pawn Blueprint assigned in EnemyClassesByTag.
+    // Puzzle-only enemy type. Keep its pawn Blueprint assigned in EnemyClassesByTag.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
     FName WeepingAngelEnemyTag = TEXT("EnemyWeepingAngel");
 
@@ -304,7 +304,11 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies")
     FName ChaserEnemyTag = FName(TEXT("Chaser"));
 
-    // Place the hallway normally, then wait before spawning its Chaser.
+    // Box component tag in the Chaser hallway. Entering it starts the countdown once.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies")
+    FName ChaserSpawnTriggerTag = TEXT("ChaserSpawnTrigger");
+
+    // Wait this long after the player enters the tagged box before spawning the Chaser.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies", meta = (ClampMin = "0.0", Units = "s"))
     float ChaserSpawnDelay = 10.0f;
 
@@ -509,6 +513,18 @@ private:
 
     FTimerHandle ArrivalCheckTimer;
     FTimerHandle ChaserSpawnTimer;
+
+    TWeakObjectPtr<UBoxComponent> ChaserSpawnTrigger;
+    int32 ChaserSpawnHallwayIndex = INDEX_NONE;
+    bool bChaserCountdownStarted = false;
+
+    bool PrepareChaserSpawnTrigger(int32 HallwayIndex);
+    void EnableChaserSpawnTrigger();
+    void ClearChaserSpawnTrigger();
+
+    UFUNCTION()
+    void OnChaserSpawnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
     FRandomStream RandomStream;
 
     bool ValidateRoom(AMazeActors* Room, FName IncomingDoorTag = NAME_None) const;
