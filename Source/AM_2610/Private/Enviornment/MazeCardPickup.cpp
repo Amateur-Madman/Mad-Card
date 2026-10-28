@@ -25,8 +25,18 @@ void AMazeCardPickup::BeginPlay()
         }
     }
 
-    // The existing CardPickup rolls once before running its Blueprint BeginPlay.
+    // CardPickup rolls the card once, runs Blueprint BeginPlay, then refreshes the icon.
     Super::BeginPlay();
+}
+
+UTexture2D* AMazeCardPickup::GetPickupIcon() const
+{
+    if (bSecondChanceSelected)
+    {
+        return SecondChanceIcon.Get();
+    }
+
+    return Super::GetPickupIcon();
 }
 
 bool AMazeCardPickup::CanPickup_Implementation(AActor* Target)

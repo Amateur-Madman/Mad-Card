@@ -1,8 +1,8 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "Actors/CardPickup.h"
 #include "Cards/CardHandComponent.h"
+#include "Components/BillboardComponent.h"
 #include "Components/StaticMeshComponent.h"
 
 ACardPickup::ACardPickup()
@@ -10,6 +10,15 @@ ACardPickup::ACardPickup()
 	CardMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CardMesh"));
 	CardMesh->SetupAttachment(GetRootComponent());
 	CardMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	CardIconDisplay = CreateDefaultSubobject<UBillboardComponent>(TEXT("CardIconDisplay"));
+	CardIconDisplay->SetupAttachment(GetRootComponent());
+	CardIconDisplay->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CardIconDisplay->SetHiddenInGame(false);
+	CardIconDisplay->SetSprite(nullptr);
+	CardIconDisplay->bIsScreenSizeScaled = false;
+	CardIconDisplay->bUseInEditorScaling = false;
+	CardIconDisplay->SetRelativeScale3D(FVector(0.1f));
 
 	// Cards are deliberate pickups: the player presses the context button, and the choice
 	// to leave one behind is part of the risk/reward loop.
@@ -51,6 +60,28 @@ void ACardPickup::BeginPlay()
 	}
 
 	Super::BeginPlay();
+
+	// MazeCardPickup has already selected Second Chance before calling this BeginPlay.
+	// Virtual GetPickupIcon() therefore resolves the icon for the actual reward.
+	RefreshPickupVisual();
+}
+
+UTexture2D* ACardPickup::GetPickupIcon() const
+{
+	const UBaseCard* CardDefaults = CardClass ? CardClass->GetDefaultObject<UBaseCard>() : nullptr;
+	return CardDefaults ? CardDefaults->GetIcon() : nullptr;
+}
+
+void ACardPickup::RefreshPickupVisual()
+{
+	if (!IsValid(CardIconDisplay))
+	{
+		return;
+	}
+
+	UTexture2D* PickupIcon = GetPickupIcon();
+	CardIconDisplay->SetSprite(PickupIcon);
+	CardIconDisplay->SetVisibility(PickupIcon != nullptr);
 }
 
 void ACardPickup::PostPickup()

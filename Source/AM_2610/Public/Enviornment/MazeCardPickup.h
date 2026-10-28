@@ -22,6 +22,7 @@ class AM_2610_API AMazeCardPickup : public ACardPickup
 
 public:
     virtual bool CanPickup_Implementation(AActor* Target) override;
+    virtual UTexture2D* GetPickupIcon() const override;
 
 protected:
     virtual void BeginPlay() override;
@@ -39,6 +40,10 @@ protected:
     // Assign Dash and Decoy here for a fixed Second Chance pickup's Easy-mode replacement.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup|SecondChance")
     TArray<TSubclassOf<UBaseCard>> EasyReplacementCardClasses;
+
+    // Used only when this pickup actually grants a Second Chance charge.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pickup|SecondChance")
+    TObjectPtr<UTexture2D> SecondChanceIcon = nullptr;
 
     // Available before Blueprint BeginPlay if the display needs to choose a material.
     UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Pickup|SecondChance")

@@ -7,6 +7,10 @@
 #include "Cards/BaseCard.h"
 #include "CardPickup.generated.h"
 
+class UBillboardComponent;
+class UStaticMeshComponent;
+class UTexture2D;
+
 /**
  * Picks a card up into the player's hand. Press-to-interact by default (E), and the prompt
  * hides itself while the hand is full because CanInteract is driven by CanPickup.
@@ -20,6 +24,14 @@ public:
 	ACardPickup();
 
 	virtual bool CanPickup_Implementation(AActor* Target) override;
+
+	// Read the icon from the class already selected for this pickup.
+	UFUNCTION(BlueprintPure, Category = "Pickup|Display")
+	virtual UTexture2D* GetPickupIcon() const;
+
+	// Called after the startup roll. Call again if Blueprint changes the reward later.
+	UFUNCTION(BlueprintCallable, Category = "Pickup|Display")
+	void RefreshPickupVisual();
 
 protected:
 	virtual void BeginPlay() override;
@@ -41,4 +53,8 @@ protected:
 	// Visual only - collision is the root box from ABasePickup
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup|Card")
 	UStaticMeshComponent* CardMesh;
+
+	// World-space icon. Move/scale this inherited component in the pickup Blueprint.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pickup|Display")
+	TObjectPtr<UBillboardComponent> CardIconDisplay;
 };
