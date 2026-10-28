@@ -184,7 +184,7 @@ bool AMazeGenerator::PrepareEnemyTypes()
     // A positive count needs a matching class. Zero or missing counts leave that type off.
     for (const TPair<FName, int32>& Entry : EnemyHallwayCounts)
     {
-        if (Entry.Key == ChaserEnemyTag || Entry.Value <= 0)
+        if (Entry.Key == ChaserEnemyTag || (!WeepingAngelEnemyTag.IsNone() && Entry.Key == WeepingAngelEnemyTag) || Entry.Value <= 0)
         {
             continue;
         }
@@ -198,6 +198,12 @@ bool AMazeGenerator::PrepareEnemyTypes()
 
     for (const TPair<FName, TSubclassOf<APawn>>& Entry : EnemyClassesByTag)
     {
+        // Angels belong to puzzle rooms, even if an existing Blueprint retains a hallway count.
+        if (!WeepingAngelEnemyTag.IsNone() && Entry.Key == WeepingAngelEnemyTag)
+        {
+            continue;
+        }
+
         const int32 Count = Entry.Key == ChaserEnemyTag ? 1 : FMath::Clamp(EnemyHallwayCounts.FindRef(Entry.Key), 0, 16);
 
         for (int32 Index = 0; Index < Count; ++Index)
@@ -208,11 +214,9 @@ bool AMazeGenerator::PrepareEnemyTypes()
 
     const int32 HallwayCount = FMath::Clamp(MaxHallwaysForward, 1, 100);
     const int32 BranchCount = bAllowEnemyHallwaysOnBranches && bAllowJunctions ? FMath::Clamp(MaxBranchHallways, 0, 100) : 0;
-    const int32 AngelCount = FMath::Clamp(EnemyHallwayCounts.FindRef(WeepingAngelEnemyTag), 0, 16);
-    const int32 FirstAngelSlot = FMath::Clamp(MinHallwaysBeforeWeepingAngels, 4, 100);
     const int32 EnemySpacing = FMath::Clamp(MinHallwaysBetweenEnemyHallways, 0, 100);
 
-    if (GenerationEnemyTypes.Num() > HallwayCount + BranchCount || (AngelCount > 0 && HallwayCount + BranchCount - FirstAngelSlot < AngelCount) || (BranchCount == 0 && (GenerationEnemyTypes.Num() - 1) * (EnemySpacing + 1) >= HallwayCount) || (BranchCount == 0 && AngelCount > 0 && FirstAngelSlot + (AngelCount - 1) * (EnemySpacing + 1) >= HallwayCount))
+    if (GenerationEnemyTypes.Num() > HallwayCount + BranchCount || (BranchCount == 0 && (GenerationEnemyTypes.Num() - 1) * (EnemySpacing + 1) >= HallwayCount))
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: Enemy counts or spacing do not fit %d main-route and %d possible branch hallways. Requested enemies: %d. Lower the counts/spacing or increase the hallway budgets."), HallwayCount, BranchCount, GenerationEnemyTypes.Num());
         GenerationEnemyTypes.Reset();
@@ -378,7 +382,7 @@ FName AMazeGenerator::ChooseEnemyHallwayType(UArrowComponent* Opening, int32 Rem
 
     for (const FName& EnemyType : GenerationRemainingEnemyTypes)
     {
-        if (EnemyType != ChaserEnemyTag && (EnemyType != WeepingAngelEnemyTag || *StartDistance + ParentHallway >= FMath::Clamp(MinHallwaysBeforeWeepingAngels, 4, 100)))
+        if (EnemyType != ChaserEnemyTag)
         {
             AvailableTypes.Add(EnemyType);
         }
@@ -426,7 +430,7 @@ bool AMazeGenerator::ValidateEnemyHallwaySpacing() const
         const int32* StartDistance = Distances.Find(CurrentRoom.Get());
         const FName EnemyType = FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Hallway));
 
-        if (!StartDistance || EnemyType.IsNone() || (EnemyType == WeepingAngelEnemyTag && *StartDistance < FMath::Clamp(MinHallwaysBeforeWeepingAngels, 4, 100)))
+        if (!StartDistance || EnemyType.IsNone())
         {
             return false;
         }
@@ -518,6 +522,14 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
     AMazeActors* Hallway = SpawnedEnemyHallwayActors[HallwayIndex];
     UArrowComponent* EnemySpawn = FindEnemySpawnPoint(Hallway);
     const FName EnemyType = FindEnemyTypeForSpawnPoint(EnemySpawn);
+
+    // Do not spawn a puzzle only Angel from a hallway marker.
+    if (!WeepingAngelEnemyTag.IsNone() && EnemyType == WeepingAngelEnemyTag)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Maze: Weeping Angels can only spawn in puzzle rooms, not enemy hallways."));
+        return false;
+    }
+
     const TSubclassOf<APawn> EnemyToSpawn = FindEnemyClassForSpawnPoint(EnemySpawn);
 
     if (!GetWorld() || EnemyType.IsNone() || !EnemyToSpawn || !IsValid(EnemySpawn))

@@ -51,13 +51,9 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Enemies")
     TArray<TObjectPtr<AMazeActors>> SpawnedEnemyHallwayActors;
 
-    // Counts for other enemy tags. Chaser is always one. Missing or zero disables a type.
+    // Counts for other hallway enemy tags. Chaser is always one; puzzle Angels are excluded.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies", meta = (ClampMin = "0", ClampMax = "16"))
-    TMap<FName, int32> EnemyHallwayCounts = { { FName(TEXT("EnemyWeepingAngel")), 3 } };
-
-    // Four hallway pieces must come before an Angel hallway. Rooms do not count.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies", meta = (ClampMin = "4", ClampMax = "100"))
-    int32 MinHallwaysBeforeWeepingAngels = 4;
+    TMap<FName, int32> EnemyHallwayCounts;
 
     // Other enemy hallways can use the main route or a side branch.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies")
@@ -271,7 +267,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles", meta = (ClampMin = "1", ClampMax = "20"))
     int32 HallwaysAfterPuzzle = 3;
 
-    // Match this to the Weeping Angel entry already assigned in EnemyClassesByTag.
+    // Puzzle only enemy type. Keep its pawn Blueprint assigned in EnemyClassesByTag.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
     FName WeepingAngelEnemyTag = TEXT("EnemyWeepingAngel");
 
