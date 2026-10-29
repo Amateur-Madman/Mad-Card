@@ -7,11 +7,17 @@
 #include "GameFramework/PlayerController.h"
 #include "Widgets/SettingsMenu.h"
 #include "Utility/BaseGameInstance.h"
+#include "Actors/BasePlayer.h"
 
 void UPauseMenu::NativeConstruct()
 {
 	Super::NativeConstruct();
 
+
+	if (ABasePlayer* Player = Cast<ABasePlayer>(GetOwningPlayerPawn()))
+	{
+		Player->SetHUDHidden(true);
+	}
 	if (ResumeButton)   ResumeButton->OnBackgroundButtonClicked.AddDynamic(this, &UPauseMenu::HandleResumeClicked);
 	if (SettingsButton) SettingsButton->OnBackgroundButtonClicked.AddDynamic(this, &UPauseMenu::HandleSettingsClicked);
 	if (MainMenuButton) MainMenuButton->OnBackgroundButtonClicked.AddDynamic(this, &UPauseMenu::HandleMainMenuClicked);
@@ -20,6 +26,10 @@ void UPauseMenu::NativeConstruct()
 
 void UPauseMenu::NativeDestruct()
 {
+	if (ABasePlayer* Player = Cast<ABasePlayer>(GetOwningPlayerPawn()))
+	{
+		Player->SetHUDHidden(false);
+	}
 	if (IsValid(SettingsMenuInstance))
 	{
 		SettingsMenuInstance->OnClosed.RemoveDynamic(this, &UPauseMenu::HandleSettingsClosed);

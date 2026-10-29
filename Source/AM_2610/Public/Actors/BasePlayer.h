@@ -7,6 +7,7 @@
 #include "Utility/Interactable.h"
 #include "InputActionValue.h"
 #include "Perception/AIPerceptionTypes.h"
+#include "Components/SlateWrapperTypes.h"
 #include "BasePlayer.generated.h"
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBroadcast);
 
@@ -168,6 +169,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "HUD")
 	FVector GetCrosshairTarget() const;
 
+	// Collapses/restores the HUD (used by the pause menu). Remembers the HUD's
+	// previous visibility so a Blueprint-set value comes back unchanged.
+	UFUNCTION(BlueprintCallable, Category = "HUD")
+	void SetHUDHidden(bool bShouldHide);
+
 protected:
 	// Soft reference - only resolved/loaded when actually needed, not at construction time
 	UPROPERTY(EditDefaultsOnly, Category = "HUD")
@@ -175,6 +181,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HUD")
 	class UPlayerHUD* HUDObject;
+
+	bool bHUDHidden = false;
+	ESlateVisibility HUDSavedVisibility = ESlateVisibility::SelfHitTestInvisible;
 #pragma endregion
 
 #pragma region Game Flow
