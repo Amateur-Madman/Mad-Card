@@ -14,9 +14,20 @@ class AM_2610_API AWrittingBoard : public AActor
 public:	
 	// Sets default values for this actor's properties
 	AWrittingBoard();
-	virtual void Tick(float DeltaTime) override;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class UWidgetComponent* CanvasComponent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TSubclassOf<UUserWidget> SentenceWordUnderlinedClass;
 
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite)
+	class UStaticMeshComponent* Board;
+
+private:
+	void MatchCanvasSize();
 };

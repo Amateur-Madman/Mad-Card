@@ -15,6 +15,8 @@ class AM_2610_API USentenceWordUnderlined : public UUserWidget
 	GENERATED_BODY()
 	
 public:
+	void SetupAccordingToDiff();
+
 	TArray<FString> EasyArray = { TEXT("Suffer"), TEXT("You Lose"), TEXT("The Mad-Man"), TEXT("Gotcha") };
 
 	TArray<FString> HardArray = { TEXT("You'll never escape the maze"), TEXT("I was crazy once"), TEXT("You thought I'd let you go") };
@@ -25,7 +27,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> WordCharUnderlinedClass;
 
-protected:
-	// This is the widget equivalent of BeginPlay()
-	virtual void NativeOnInitialized() override;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TSubclassOf<UUserWidget> SpaceWidgetClass;
+
+private:
+	void Setup(FString bWordOrPhrase);
 };

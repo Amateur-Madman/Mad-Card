@@ -15,8 +15,8 @@ class AM_2610_API UWordCharUnderlined : public UUserWidget
 	GENERATED_BODY()
 	
 public:
-    //UFUNCTION(BlueprintCallable, Category = Default)
-    //void SetDisplayWord(FString NewWord);
+    UFUNCTION(BlueprintCallable, Category = Default)
+    void InitializeWord(FString NewWord);
 
     UPROPERTY(meta = (BindWidget))
     class UHorizontalBox* Word;
