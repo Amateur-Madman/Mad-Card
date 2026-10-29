@@ -10,6 +10,8 @@ class AMazeGenerator;
 class AMazePuzzleButton;
 class APawn;
 class UArrowComponent;
+class UBoxComponent;
+class UPrimitiveComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleButtonsUnlocked);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleConsoleStateChanged, bool, bRed);
@@ -45,6 +47,10 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Enemies")
     FName EnemySpawnTag = TEXT("PuzzleEnemySpawn");
+
+    // Separate entry box. Angels wait until the player overlaps this component tag.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Enemies")
+    FName EnemySpawnTriggerTag = TEXT("PuzzleEnemySpawnTrigger");
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
     FName PuzzleId = NAME_None;
@@ -124,6 +130,19 @@ private:
     bool bDebugSpawnAllEnemies = false;
     bool bPrepared = false;
     bool bArmed = false;
+
+    TWeakObjectPtr<UBoxComponent> EnemyEntryTrigger;
+    bool bWaitingForEnemyEntry = false;
+    bool bEnemySpawningPending = false;
+    float EnemySpawnRetryRemaining = 0.0f;
+
+    bool PrepareEnemyEntryTrigger();
+    void EnableEnemyEntryTrigger();
+    void ClearEnemyEntryTrigger();
+    void AdvanceEntryEnemySpawning(float DeltaTime);
+
+    UFUNCTION()
+    void OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
 
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;

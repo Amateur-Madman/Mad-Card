@@ -6,6 +6,7 @@
 #include "Enviornment/MazeInterface.h"
 #include "Enviornment/MazePuzzleButton.h"
 #include "Components/ArrowComponent.h"
+#include "Components/BoxComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -69,6 +70,12 @@ bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName Select
     if ((bUsePressureButtons && ButtonSpawns.Num() < 2) || (!bSpawnAllEnemies && EnemySpawns.Num() < RequestedEnemyCount) || (bSpawnAllEnemies && EnemySpawns.IsEmpty()))
     {
         UE_LOG(LogTemp, Error, TEXT("Puzzle: Provide two button arrows and enough enemy arrows. Enemy debug mode needs at least one enemy arrow."));
+        return false;
+    }
+
+    // Validate the entry trigger now, while keeping all Angels unspawned.
+    if ((RequestedEnemyCount > 0 || bSpawnAllEnemies) && !PrepareEnemyEntryTrigger())
+    {
         return false;
     }
 
@@ -198,6 +205,13 @@ bool UMazePuzzleComponent::StepEnemySpawning(bool& bFinished)
         return false;
     }
 
+    // The generator can finish while this prepared room waits for player entry.
+    if (bWaitingForEnemyEntry)
+    {
+        bFinished = true;
+        return true;
+    }
+
     if (bFinished)
     {
         return true;
@@ -277,12 +291,154 @@ bool UMazePuzzleComponent::StepEnemySpawning(bool& bFinished)
     return FinishAttempt();
 }
 
+bool UMazePuzzleComponent::PrepareEnemyEntryTrigger()
+{
+    AMazeActors* Room = Cast<AMazeActors>(GetOwner());
+
+    if (!IsValid(Room) || EnemySpawnTriggerTag.IsNone())
+    {
+        return false;
+    }
+
+    TArray<UBoxComponent*> Boxes;
+    Room->GetComponents<UBoxComponent>(Boxes);
+    UBoxComponent* Trigger = nullptr;
+
+    for (UBoxComponent* Box : Boxes)
+    {
+        if (!IsValid(Box) || !Box->ComponentHasTag(EnemySpawnTriggerTag))
+        {
+            continue;
+        }
+
+        if (Trigger || Box->ComponentHasTag(TEXT("MazeBounds")) || Box->ComponentHasTag(TEXT("RoomArrival")) || Box->ComponentHasTag(TEXT("RoomArea")) || Box->GetFName() == FName(TEXT("RoomArea")))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Puzzle: %s needs exactly one separate box tagged %s. Do not reuse MazeBounds, RoomArrival, or RoomArea."), *GetNameSafe(Room), *EnemySpawnTriggerTag.ToString());
+            return false;
+        }
+
+        Trigger = Box;
+    }
+
+    if (!IsValid(Trigger))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Puzzle: %s needs a Box Collision component tagged %s for Angel spawning on player entry."), *GetNameSafe(Room), *EnemySpawnTriggerTag.ToString());
+        return false;
+    }
+
+    ClearEnemyEntryTrigger();
+    EnemyEntryTrigger = Trigger;
+    bWaitingForEnemyEntry = true;
+
+    Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Trigger->SetCollisionResponseToAllChannels(ECR_Ignore);
+    Trigger->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+    Trigger->SetGenerateOverlapEvents(true);
+    Trigger->SetCanEverAffectNavigation(false);
+    Trigger->OnComponentBeginOverlap.AddUniqueDynamic(this, &UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap);
+    return true;
+}
+
+void UMazePuzzleComponent::EnableEnemyEntryTrigger()
+{
+    UBoxComponent* Trigger = EnemyEntryTrigger.Get();
+
+    if (!bArmed || !bWaitingForEnemyEntry || !IsValid(Trigger) || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        return;
+    }
+
+    Trigger->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+
+    TArray<AActor*> OverlappingActors;
+    Trigger->GetOverlappingActors(OverlappingActors, APawn::StaticClass());
+
+    for (AActor* Actor : OverlappingActors)
+    {
+        OnEnemyEntryTriggerBeginOverlap(Trigger, Actor, nullptr, INDEX_NONE, false, FHitResult());
+    }
+}
+
+void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    APawn* Player = Cast<APawn>(OtherActor);
+
+    if (!bArmed || !bWaitingForEnemyEntry || !IsValid(OverlappedComponent) || OverlappedComponent != EnemyEntryTrigger.Get() || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        return;
+    }
+
+    // Latch before spawning; additional player components and re-entry cannot duplicate it.
+    bWaitingForEnemyEntry = false;
+    bEnemySpawningPending = true;
+    EnemySpawnRetryRemaining = 0.0f;
+
+    UBoxComponent* Trigger = EnemyEntryTrigger.Get();
+    Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap);
+    Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // Keep the pressure-room door and console behavior when entry starts the Angels.
+    if (bUsePressureButtons && !bPuzzleStarted)
+    {
+        BeginPuzzle(Player);
+    }
+
+    UE_LOG(LogTemp, Display, TEXT("Puzzle: Player entered %s. Starting the room's Weeping Angel spawns."), *GetNameSafe(GetOwner()));
+
+    AdvanceEntryEnemySpawning(0.0f);
+    SetComponentTickEnabled(bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+}
+
+void UMazePuzzleComponent::AdvanceEntryEnemySpawning(float DeltaTime)
+{
+    if (!bArmed || !bEnemySpawningPending || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        return;
+    }
+
+    EnemySpawnRetryRemaining = FMath::Max(0.0f, EnemySpawnRetryRemaining - FMath::Max(0.0f, DeltaTime));
+
+    if (EnemySpawnRetryRemaining > 0.0f)
+    {
+        return;
+    }
+
+    bool bFinished = false;
+
+    if (!StepEnemySpawning(bFinished))
+    {
+        // A player may temporarily block a spawn after entry. Retry without rebuilding
+        // the occupied maze or discarding the Angels already spawned successfully.
+        EnemySpawnIndex = 0;
+        EnemySpawnRetryRemaining = 1.0f;
+    }
+    else if (bFinished)
+    {
+        bEnemySpawningPending = false;
+    }
+}
+
+void UMazePuzzleComponent::ClearEnemyEntryTrigger()
+{
+    if (UBoxComponent* Trigger = EnemyEntryTrigger.Get())
+    {
+        Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap);
+        Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
+
+    EnemyEntryTrigger.Reset();
+    bWaitingForEnemyEntry = false;
+    bEnemySpawningPending = false;
+    EnemySpawnRetryRemaining = 0.0f;
+}
+
 void UMazePuzzleComponent::ArmPuzzle()
 {
-    // Debug mode finishes after testing every marker, even if some locations failed.
-    const bool bEnemiesReady = bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount;
+    // A validated entry trigger counts as ready while its Angels wait for the player.
+    const bool bEnemiesReady = bWaitingForEnemyEntry || bEnemySpawningPending || (bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount);
     bArmed = bPrepared && (!bUsePressureButtons || SpawnedButtons.Num() == 2) && bEnemiesReady;
-    SetComponentTickEnabled(bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked);
+    SetComponentTickEnabled(bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked)));
+    EnableEnemyEntryTrigger();
 }
 
 bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
@@ -347,8 +503,15 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    AdvanceEntryEnemySpawning(DeltaTime);
+
     if (!bArmed || !bPuzzleStarted || bButtonsUnlocked || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || SpawnedButtons.Num() != 2 || !IsValid(SpawnedButtons[0]) || !IsValid(SpawnedButtons[1]))
     {
+        if (!bEnemySpawningPending)
+        {
+            SetComponentTickEnabled(false);
+        }
+
         return;
     }
 
@@ -365,7 +528,7 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         // Turn the console blue, but keep the door locked until it is used.
         bButtonsUnlocked = true;
         bConsoleRed = false;
-        SetComponentTickEnabled(false);
+        SetComponentTickEnabled(bEnemySpawningPending);
         OnConsoleStateChanged.Broadcast(false);
         OnButtonsUnlocked.Broadcast();
     }
@@ -379,7 +542,7 @@ bool UMazePuzzleComponent::CompletePuzzle()
     }
 
     bPuzzleCompleted = true;
-    SetComponentTickEnabled(false);
+    SetComponentTickEnabled(bEnemySpawningPending);
     OnPuzzleCompleted.Broadcast();
     return true;
 }
@@ -426,6 +589,7 @@ void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     bArmed = false;
     SetComponentTickEnabled(false);
+    ClearEnemyEntryTrigger();
     ClearSpawnedActors();
     Super::EndPlay(EndPlayReason);
 }
