@@ -13,6 +13,7 @@
 #include "GameFramework/Pawn.h"
 #include "AM_2610/AM_2610.h"
 #include "Engine/World.h"
+#include "Misc/Crc.h"
 #include "NavMesh/NavMeshBoundsVolume.h"
 #include "NavigationData.h"
 #include "NavigationSystem.h"
@@ -20,7 +21,7 @@
 namespace
 {
     // Sort the connection arrows by name for repeatable random choices.
-    TArray<UArrowComponent*> SortedConnections(AMazeActors* Piece)
+    TArray<UArrowComponent*> GatherSortedConnections(AMazeActors* Piece)
     {
         if (!IsValid(Piece))
         {
@@ -56,6 +57,228 @@ namespace
             }
         }
     }
+}
+
+TArray<UArrowComponent*> AMazeGenerator::GetSortedConnections(AMazeActors* Piece) const
+{
+    if (!IsValid(Piece))
+    {
+        return {};
+    }
+
+    // Never retain geometry outside the generation request: runtime rooms may animate.
+    if (LoopState != EMazeLoopState::Generating)
+    {
+        return GatherSortedConnections(Piece);
+    }
+
+    FCachedPieceGeometry& Cached = PieceGeometryCache.FindOrAdd(Piece);
+    if (!Cached.bConnectionsCached)
+    {
+        for (UArrowComponent* Arrow : GatherSortedConnections(Piece))
+        {
+            Cached.Connections.Add(Arrow);
+        }
+        Cached.bConnectionsCached = true;
+    }
+
+    TArray<UArrowComponent*> Result;
+    Result.Reserve(Cached.Connections.Num());
+    for (const TWeakObjectPtr<UArrowComponent>& Arrow : Cached.Connections)
+    {
+        if (Arrow.IsValid())
+        {
+            Result.Add(Arrow.Get());
+        }
+    }
+    return Result;
+}
+
+void AMazeGenerator::DiscardMazePiece(AMazeActors* Piece)
+{
+    PieceGeometryCache.Remove(Piece);
+    if (IsValid(Piece) && Piece != CurrentRoom)
+    {
+        Piece->Destroy();
+    }
+}
+
+void AMazeGenerator::CaptureRouteCheckpoint()
+{
+    if (bRouteCheckpointPending || (GenerationStage != EGenerationStage::MainRoute
+        && GenerationStage != EGenerationStage::PuzzleRoom
+        && GenerationStage != EGenerationStage::ExitHallways))
+    {
+        return;
+    }
+
+    FRouteCheckpoint& State = PendingRouteCheckpoint;
+    State = FRouteCheckpoint();
+    State.Stage = GenerationStage;
+    State.ActorCount = SpawnedMazeActors.Num();
+    State.HallwayIndex = GenerationHallwayIndex;
+    State.ExitHallwayIndex = GenerationExitHallwayIndex;
+    State.RouteRoomCount = GenerationRouteRoomCount;
+    State.HallwaysSinceRoom = GenerationHallwaysSinceRoom;
+    State.NextJunctionAt = GenerationNextJunctionAt;
+    State.ConsecutiveRooms = GenerationConsecutiveRouteRooms;
+    State.LastRoomClass = GenerationLastRouteRoomClass.Get();
+    State.PreviousExit = GenerationPreviousExit;
+    State.End = EndArrow;
+    State.EndTransform = EndConnectionTransform;
+    State.PuzzleRoom = SpawnedPuzzleRoom.Get();
+    State.Openings = OpenConnections;
+    State.BlockedOpenings = BlockedConnections;
+    State.BranchStates = BranchRoomStates;
+    for (AMazeActors* Hallway : SpawnedEnemyHallwayActors)
+    {
+        State.EnemyHallways.Add(Hallway);
+    }
+    State.RemainingEnemies = GenerationRemainingEnemyTypes;
+    State.PieceLinks = GenerationPieceLinks;
+    State.HallwayPieces = GenerationHallwayPieces;
+    State.RejectedChoices = RejectedRouteChoices;
+    bRouteCheckpointPending = true;
+}
+
+void AMazeGenerator::RememberRoutePlacement(AMazeActors* Piece, UArrowComponent* Entrance)
+{
+    if (!bRouteCheckpointPending || !IsValid(Piece) || !IsValid(Entrance))
+    {
+        return;
+    }
+
+    PendingRouteCheckpoint.Choice.PieceClass = Piece->GetClass();
+    PendingRouteCheckpoint.Choice.EntranceName = Entrance->GetFName();
+    RouteCheckpoints.Add(MoveTemp(PendingRouteCheckpoint));
+    PendingRouteCheckpoint = FRouteCheckpoint();
+    bRouteCheckpointPending = false;
+    RejectedRouteChoices.Reset();
+}
+
+bool AMazeGenerator::IsRejectedRouteChoice(AMazeActors* Piece, UArrowComponent* Entrance) const
+{
+    return bRouteCheckpointPending && RejectedRouteChoices.ContainsByPredicate(
+        [Piece, Entrance](const FRouteChoice& Choice)
+        {
+            return Choice.PieceClass.Get() == Piece->GetClass()
+                && Choice.EntranceName == Entrance->GetFName();
+        });
+}
+
+bool AMazeGenerator::TryBacktrackRoute()
+{
+    const bool bRouteStage = GenerationStage == EGenerationStage::MainRoute
+        || GenerationStage == EGenerationStage::PuzzleRoom
+        || GenerationStage == EGenerationStage::ExitHallways
+        || GenerationStage == EGenerationStage::EndRoom
+        || GenerationStage == EGenerationStage::NextRoom;
+    if (!bRouteStage || RouteCheckpoints.IsEmpty()
+        || LocalBacktracksThisAttempt >= FMath::Clamp(MaxLocalBacktracks, 0, 256)
+        || bGenerationTimedOut)
+    {
+        return false;
+    }
+
+    const int32 Index = RouteCheckpoints.Num() - 1;
+    FRouteCheckpoint State = MoveTemp(RouteCheckpoints[Index]);
+    RouteCheckpoints.RemoveAt(Index);
+
+    // Before branches/enemies exist, only a short route suffix needs to be removed.
+    while (SpawnedMazeActors.Num() > State.ActorCount)
+    {
+        const int32 Last = SpawnedMazeActors.Num() - 1;
+        AMazeActors* Piece = SpawnedMazeActors[Last];
+        SpawnedMazeActors.RemoveAt(Last);
+        DiscardMazePiece(Piece);
+    }
+
+    GenerationStage = State.Stage;
+    GenerationHallwayIndex = State.HallwayIndex;
+    GenerationExitHallwayIndex = State.ExitHallwayIndex;
+    GenerationRouteRoomCount = State.RouteRoomCount;
+    GenerationHallwaysSinceRoom = State.HallwaysSinceRoom;
+    GenerationNextJunctionAt = State.NextJunctionAt;
+    GenerationConsecutiveRouteRooms = State.ConsecutiveRooms;
+    GenerationLastRouteRoomClass = State.LastRoomClass.Get();
+    GenerationPreviousExit = State.PreviousExit;
+    EndArrow = State.End;
+    EndConnectionTransform = State.EndTransform;
+    SpawnedPuzzleRoom = State.PuzzleRoom.Get();
+    SpawnedEndRoom = nullptr;
+    NextRoom = nullptr;
+    NextRoomEntranceTag = NAME_None;
+    OpenConnections = MoveTemp(State.Openings);
+    BlockedConnections = MoveTemp(State.BlockedOpenings);
+    BranchRoomStates = MoveTemp(State.BranchStates);
+    GenerationRemainingEnemyTypes = MoveTemp(State.RemainingEnemies);
+    GenerationPieceLinks = MoveTemp(State.PieceLinks);
+    GenerationHallwayPieces = MoveTemp(State.HallwayPieces);
+    SpawnedEnemyHallways.Reset();
+    SpawnedEnemyHallwayActors.Reset();
+    SpawnedEnemies.Reset();
+    for (const TWeakObjectPtr<AMazeActors>& Hallway : State.EnemyHallways)
+    {
+        if (Hallway.IsValid())
+        {
+            const FName Type = FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Hallway.Get()));
+            if (!SpawnedEnemyHallways.Contains(Type))
+            {
+                SpawnedEnemyHallways.Add(Type, Hallway.Get());
+            }
+            SpawnedEnemyHallwayActors.Add(Hallway.Get());
+            SpawnedEnemies.Add(nullptr);
+        }
+    }
+
+    RejectedRouteChoices = MoveTemp(State.RejectedChoices);
+    RejectedRouteChoices.Add(State.Choice);
+    PendingRouteCheckpoint = FRouteCheckpoint();
+    bRouteCheckpointPending = false;
+    bAttachmentPending = false;
+    PendingAttachmentClasses.Reset();
+    PendingEnemyType = NAME_None;
+    GenerationTarget.Reset();
+    bTryingMainJunction = false;
+    ++LocalBacktracksThisAttempt;
+    ++TotalGenerationBacktracks;
+    return true;
+}
+
+void AMazeGenerator::ResetRouteSearch()
+{
+    RouteCheckpoints.Reset();
+    PendingRouteCheckpoint = FRouteCheckpoint();
+    RejectedRouteChoices.Reset();
+    bRouteCheckpointPending = false;
+    LocalBacktracksThisAttempt = 0;
+}
+
+void AMazeGenerator::LockGenerationNavigation()
+{
+    if (!bBatchNavigationBuild || GenerationNavigationLockOwner.IsValid())
+    {
+        return;
+    }
+    if (UNavigationSystemV1* Navigation = UNavigationSystemV1::GetCurrent(GetWorld()))
+    {
+        // Custom is a bit flag, not a reference count. Do not take ownership of another lock.
+        if (!Navigation->IsNavigationBuildingLocked(ENavigationBuildLock::Custom))
+        {
+            Navigation->AddNavigationBuildLock(ENavigationBuildLock::Custom);
+            GenerationNavigationLockOwner = Navigation;
+        }
+    }
+}
+
+void AMazeGenerator::UnlockGenerationNavigation()
+{
+    if (UNavigationSystemV1* Navigation = GenerationNavigationLockOwner.Get())
+    {
+        Navigation->RemoveNavigationBuildLock(ENavigationBuildLock::Custom,
+            UNavigationSystemV1::ELockRemovalRebuildAction::Rebuild);
+    }
+    GenerationNavigationLockOwner.Reset();
 }
 
 AMazeGenerator::AMazeGenerator()
@@ -257,7 +480,7 @@ void AMazeGenerator::TrackMazeConnections(AMazeActors* Piece, bool bHallway)
         return;
     }
 
-    const TArray<UArrowComponent*> Connections = SortedConnections(Piece);
+    const TArray<UArrowComponent*> Connections = GetSortedConnections(Piece);
     TArray<TWeakObjectPtr<AMazeActors>> Neighbours;
 
     for (const TPair<TWeakObjectPtr<AMazeActors>, TArray<TWeakObjectPtr<AMazeActors>>>& Entry : GenerationPieceLinks)
@@ -269,7 +492,7 @@ void AMazeGenerator::TrackMazeConnections(AMazeActors* Piece, bool bHallway)
             continue;
         }
 
-        for (UArrowComponent* OtherArrow : SortedConnections(Other))
+        for (UArrowComponent* OtherArrow : GetSortedConnections(Other))
         {
             // Locked, unused start-room doors are not extra routes into the maze.
             if (Other == CurrentRoom.Get() && OtherArrow != StartArrow.Get())
@@ -845,7 +1068,7 @@ void AMazeGenerator::StepNavigation()
     if (FPlatformTime::Seconds() - NavigationWaitStartedAt >= FMath::Max(1.0f, NavigationBuildTimeout))
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: Navigation timed out. Check Dynamic generation, supported agent size, floor collision, and EnemySpawn placement."));
-        BeginGenerationCleanup(false);
+        BeginGenerationCleanup(bSeedCollectionRunning || bSeedAttemptUsesBank);
         return;
     }
 
@@ -935,7 +1158,7 @@ void AMazeGenerator::ClearGeneratedLayout()
     {
         if (IsValid(Piece) && Piece != CurrentRoom)
         {
-            Piece->Destroy();
+            DiscardMazePiece(Piece);
         }
     }
 
@@ -960,6 +1183,16 @@ bool AMazeGenerator::GetFootprints(AMazeActors* Piece, TArray<FBox>& Boxes) cons
     if (!IsValid(Piece))
     {
         return false;
+    }
+
+    if (LoopState == EMazeLoopState::Generating)
+    {
+        const FCachedPieceGeometry* Cached = PieceGeometryCache.Find(Piece);
+        if (Cached && Cached->bBoundsCached && Cached->Transform.Equals(Piece->GetActorTransform()))
+        {
+            Boxes = Cached->Boxes;
+            return !Boxes.IsEmpty();
+        }
     }
 
     TArray<UBoxComponent*> Components;
@@ -1001,6 +1234,14 @@ bool AMazeGenerator::GetFootprints(AMazeActors* Piece, TArray<FBox>& Boxes) cons
         UE_LOG(LogTemp, Warning, TEXT("Maze: %s has no box components tagged MazeBounds."), *Piece->GetName());
     }
 
+    if (LoopState == EMazeLoopState::Generating && !Boxes.IsEmpty())
+    {
+        FCachedPieceGeometry& Cached = PieceGeometryCache.FindOrAdd(Piece);
+        Cached.Transform = Piece->GetActorTransform();
+        Cached.Boxes = Boxes;
+        Cached.bBoundsCached = true;
+    }
+
     return !Boxes.IsEmpty();
 }
 
@@ -1013,8 +1254,8 @@ bool AMazeGenerator::IsBoundsSeamAllowed(AMazeActors* First, AMazeActors* Second
         return false;
     }
 
-    const TArray<UArrowComponent*> FirstConnections = SortedConnections(First);
-    const TArray<UArrowComponent*> SecondConnections = SortedConnections(Second);
+    const TArray<UArrowComponent*> FirstConnections = GetSortedConnections(First);
+    const TArray<UArrowComponent*> SecondConnections = GetSortedConnections(Second);
 
     for (UArrowComponent* A : FirstConnections)
     {
@@ -1084,12 +1325,12 @@ bool AMazeGenerator::PrepareEndCapFootprint()
     }
 
     MakeMovable(Cap);
-    const TArray<UArrowComponent*> Connections = SortedConnections(Cap);
+    const TArray<UArrowComponent*> Connections = GetSortedConnections(Cap);
     TArray<FBox> Boxes;
 
     if (Connections.Num() != 1 || !GetFootprints(Cap, Boxes))
     {
-        Cap->Destroy();
+        DiscardMazePiece(Cap);
         return false;
     }
 
@@ -1124,7 +1365,7 @@ bool AMazeGenerator::PrepareEndCapFootprint()
         }
     }
 
-    Cap->Destroy();
+    DiscardMazePiece(Cap);
     return !EndCapFootprintCorners.IsEmpty();
 }
 
@@ -1188,7 +1429,7 @@ bool AMazeGenerator::CanReserveEndCaps(AMazeActors* Piece, UArrowComponent* Entr
         return false;
     }
 
-    for (UArrowComponent* Connection : SortedConnections(Piece))
+    for (UArrowComponent* Connection : GetSortedConnections(Piece))
     {
         if (Connection == Entrance || Connection == ReservedExit)
         {
@@ -1278,7 +1519,7 @@ bool AMazeGenerator::IsConnectionCrowded(UArrowComponent* Connection) const
 
 TArray<UArrowComponent*> AMazeGenerator::GetRouteExits(AMazeActors* Piece, UArrowComponent* Entrance) const
 {
-    TArray<UArrowComponent*> Exits = SortedConnections(Piece);
+    TArray<UArrowComponent*> Exits = GetSortedConnections(Piece);
     Exits.Remove(Entrance);
 
     Exits.RemoveAll([this, Piece, Entrance](UArrowComponent* Exit)
@@ -1341,7 +1582,7 @@ bool AMazeGenerator::OverlapsMaze(AMazeActors* Piece, UArrowComponent* IgnoredOp
                             continue;
                         }
 
-                        UE_LOG(LogTemp, Warning, TEXT("Maze: %s overlaps %s outside a connected doorway seam. OverlapX=%.2f, OverlapY=%.2f, SeamTolerance=%.2f."), *Piece->GetName(), *Existing->GetName(), OverlapX, OverlapY, Tolerance);
+                        UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: %s overlaps %s outside a connected doorway seam. OverlapX=%.2f, OverlapY=%.2f, SeamTolerance=%.2f."), *Piece->GetName(), *Existing->GetName(), OverlapX, OverlapY, Tolerance);
                         return true;
                     }
                 }
@@ -1394,7 +1635,7 @@ UArrowComponent* AMazeGenerator::FindTaggedConnection(AMazeActors* MazeActor, co
         return nullptr;
     }
 
-    for (UArrowComponent* Connection : SortedConnections(MazeActor))
+    for (UArrowComponent* Connection : GetSortedConnections(MazeActor))
     {
         if (Connection->ComponentHasTag(RequiredTag))
         {
@@ -1463,7 +1704,7 @@ void AMazeGenerator::StepMainRoute()
 
     if (Exits.IsEmpty())
     {
-        Piece->Destroy();
+        DiscardMazePiece(Piece);
         BeginGenerationCleanup(true);
         return;
     }
@@ -1471,7 +1712,7 @@ void AMazeGenerator::StepMainRoute()
     // The only Chaser hallway still connects directly to the start room.
     if (bEnemyHallwaySlot && EnemyType == ChaserEnemyTag && (GenerationHallwayIndex != 0 || SpawnedEnemyHallways.Contains(EnemyType)))
     {
-        Piece->Destroy();
+        DiscardMazePiece(Piece);
         BeginGenerationCleanup(true);
         return;
     }
@@ -1500,7 +1741,7 @@ void AMazeGenerator::StepMainRoute()
         }
     }
 
-    if (SortedConnections(Piece).Num() > 2)
+    if (GetSortedConnections(Piece).Num() > 2)
     {
         GenerationNextJunctionAt = GenerationHallwayIndex + RandomStream.RandRange(GenerationMinJunctionSpacing, GenerationMaxJunctionSpacing);
     }
@@ -1558,7 +1799,7 @@ TArray<FName> AMazeGenerator::GetRemainingPuzzleIds() const
     return Remaining;
 }
 
-bool AMazeGenerator::SelectPuzzleRoom()
+bool AMazeGenerator::SelectPuzzleRoom(FName DoorTag)
 {
     if (PuzzleRoomsById.IsEmpty())
     {
@@ -1587,22 +1828,41 @@ bool AMazeGenerator::SelectPuzzleRoom()
         RoomClasses.Add(Entry.Value.Get());
     }
 
-    // A debug rebuild keeps the selected puzzle and rolls back its completion.
+    // A debug rebuild keeps the selected puzzle without removing its recorded completion.
     if (bRebuildingPuzzle)
     {
         const TSubclassOf<AMazeActors>* RoomClass = PuzzleRoomsById.Find(ActivePuzzleId);
         return RoomClass && *RoomClass == ActivePuzzleRoomClass;
     }
 
-    const TArray<FName> Remaining = GetRemainingPuzzleIds();
-
-    if (Remaining.IsEmpty())
+    if (const FName* AssignedPuzzle = DoorPuzzleAssignments.Find(DoorTag))
     {
-        return false;
+        const TSubclassOf<AMazeActors>* RoomClass = PuzzleRoomsById.Find(*AssignedPuzzle);
+        if (!RoomClass || !*RoomClass) { return false; }
+        ActivePuzzleId = *AssignedPuzzle;
+        ActivePuzzleRoomClass = *RoomClass;
+        bCurrentPuzzleCompleted = false;
+        return true;
     }
 
-    ActivePuzzleId = Remaining[RandomStream.RandRange(0, Remaining.Num() - 1)];
+    TArray<FName> Remaining = GetRemainingPuzzleIds();
+    for (const auto& Assignment : DoorPuzzleAssignments) { Remaining.Remove(Assignment.Value); }
+    if (Remaining.IsEmpty() || !DoorTags.Contains(DoorTag)) { return false; }
+
+    // A new door gets a remaining puzzle; a saved assignment always wins on replay.
+    if (PuzzleRunSeed == 0) { SetPuzzleRunSeed(FMath::Rand()); }
+    FString PuzzleKey = DoorTag.ToString() + FString::Printf(TEXT("|%d"), PuzzleRunSeed);
+    for (const FName& Id : Remaining) { PuzzleKey += TEXT("|") + Id.ToString(); }
+    FRandomStream PuzzleStream;
+    PuzzleStream.Initialize(static_cast<int32>(FCrc::StrCrc32(*PuzzleKey)));
+    ActivePuzzleId = Remaining[PuzzleStream.RandRange(0, Remaining.Num() - 1)];
     ActivePuzzleRoomClass = PuzzleRoomsById.FindChecked(ActivePuzzleId);
+    bool bCollecting = false;
+#if WITH_EDITOR
+    bCollecting = (bCollectSeedsInEditor || bReplaceSeedBankOnCollection)
+        && GetWorld() && GetWorld()->WorldType == EWorldType::PIE;
+#endif
+    if (!bCollecting) { DoorPuzzleAssignments.Add(DoorTag, ActivePuzzleId); }
     bCurrentPuzzleCompleted = false;
     return true;
 }
@@ -1616,16 +1876,17 @@ bool AMazeGenerator::RegisterPuzzleCompleted(AMazeActors* Room)
 {
     UMazePuzzleComponent* Puzzle = GetPuzzleComponent();
 
-    if (LoopState != EMazeLoopState::TraversingMaze || !IsValid(Room) || Room != SpawnedPuzzleRoom || !IsValid(Puzzle) || !Puzzle->bButtonsUnlocked || !Puzzle->bPuzzleDoorUnlocked || (Puzzle->bUsePressureButtons && !Puzzle->bPuzzleStarted) || bCurrentPuzzleCompleted || ActivePuzzleId.IsNone() || CompletedPuzzleIds.Contains(ActivePuzzleId) || !IsValid(SpawnedEndRoom))
+    if (LoopState != EMazeLoopState::TraversingMaze || !IsValid(Room) || Room != SpawnedPuzzleRoom || !IsValid(Puzzle) || !Puzzle->bButtonsUnlocked || !Puzzle->bPuzzleDoorUnlocked || (Puzzle->bUsePressureButtons && !Puzzle->bPuzzleStarted) || bCurrentPuzzleCompleted || ActivePuzzleId.IsNone() || !IsValid(SpawnedEndRoom))
     {
         return false;
     }
 
     // Selecting or spawning a room never counts as completing its puzzle.
-    CompletedPuzzleIds.Add(ActivePuzzleId);
+    const bool bFirstCompletion = !CompletedPuzzleIds.Contains(ActivePuzzleId);
+    if (bFirstCompletion) { CompletedPuzzleIds.Add(ActivePuzzleId); }
     bCurrentPuzzleCompleted = true;
     IMazeInterface::Execute_SetMazeDoorLocked(SpawnedEndRoom, MazeEndDoorTag, false);
-    OnPuzzleCompleted.Broadcast(ActivePuzzleId);
+    if (bFirstCompletion) { OnPuzzleCompleted.Broadcast(ActivePuzzleId); }
     return true;
 }
 
@@ -1661,12 +1922,12 @@ bool AMazeGenerator::SpawnEndRoom()
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: EndRoomClass needs MazeBounds and an exit arrow tagged %s."), *EndRoomExitTag.ToString());
 
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return false;
     }
 
     // Reserve the tagged exit for the next start room.
-    TArray<UArrowComponent*> Entrances = SortedConnections(Candidate);
+    TArray<UArrowComponent*> Entrances = GetSortedConnections(Candidate);
     Entrances.Remove(RoomExit);
 
     Entrances.RemoveAll([this](UArrowComponent* Arrow)
@@ -1694,12 +1955,14 @@ bool AMazeGenerator::SpawnEndRoom()
 
     for (UArrowComponent* Entrance : Entrances)
     {
-        Candidate->SetActorLocationAndRotation(TargetPosition, FRotator::ZeroRotator);
-
-        const float Yaw = FMath::UnwindDegrees(TargetForward.Rotation().Yaw + 180.0f - Entrance->GetForwardVector().Rotation().Yaw);
-
-        Candidate->SetActorRotation(FRotator(0.0f, Yaw, 0.0f));
-        Candidate->SetActorLocation(Candidate->GetActorLocation() + TargetPosition - Entrance->GetComponentLocation());
+        const FTransform OriginalTransform = Candidate->GetActorTransform();
+        const FVector LocalEntrance = OriginalTransform.InverseTransformPosition(Entrance->GetComponentLocation());
+        const FVector LocalForward = OriginalTransform.InverseTransformVectorNoScale(Entrance->GetForwardVector());
+        const float Yaw = FMath::UnwindDegrees(TargetForward.Rotation().Yaw + 180.0f - LocalForward.Rotation().Yaw);
+        FTransform Placement(FRotator(0.0f, Yaw, 0.0f), FVector::ZeroVector, Candidate->GetActorScale3D());
+        Placement.SetLocation(TargetPosition - Placement.TransformPosition(LocalEntrance));
+        Candidate->SetActorTransform(Placement);
+        PieceGeometryCache.FindOrAdd(Candidate).bBoundsCached = false;
 
         const bool bFacingCorrectly = FVector::DotProduct(Entrance->GetForwardVector(), TargetForward.GetSafeNormal()) <= -0.999f;
         const bool bPositionMatches = FVector::Dist(Entrance->GetComponentLocation(), TargetPosition) <= FMath::Max(0.1f, ConnectionTolerance);
@@ -1714,13 +1977,15 @@ bool AMazeGenerator::SpawnEndRoom()
         }
     }
 
-    Candidate->Destroy();
+    DiscardMazePiece(Candidate);
 
     return false;
 }
 
 void AMazeGenerator::StartAttachment(const FVector& TargetPosition, const FVector& TargetForward, int32 MinConnections, int32 MaxConnections, bool bCap, FName EnemyType, bool bRouteRoom, TSubclassOf<AMazeActors> ForcedClass)
 {
+    CaptureRouteCheckpoint();
+
     PendingTargetPosition = TargetPosition;
     PendingTargetForward = TargetForward;
     PendingMinConnections = MinConnections;
@@ -1771,6 +2036,19 @@ void AMazeGenerator::StartAttachment(const FVector& TargetPosition, const FVecto
         }
 
         PendingAttachmentClasses.Add(RouteRoomClasses[RoomIndex]);
+        if (bRandomizeRouteRooms)
+        {
+            // A blocked card/trap room can try another permitted type at this same opening.
+            for (const TSubclassOf<AMazeActors>& RoomClass : RouteRoomClasses)
+            {
+                if (RoomClass && (PreviousRoomCount < 2 || RoomClass.Get() != PreviousRoomClass
+                    || !RouteRoomClasses.ContainsByPredicate([PreviousRoomClass](const TSubclassOf<AMazeActors>& Other)
+                        { return Other && Other.Get() != PreviousRoomClass; })))
+                {
+                    PendingAttachmentClasses.AddUnique(RoomClass);
+                }
+            }
+        }
     }
     else if (!PendingEnemyType.IsNone())
     {
@@ -1806,7 +2084,7 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
                 return EAttachmentResult::Pending;
             }
 
-            UE_LOG(LogTemp, Warning, TEXT("Maze: No candidate fits at %s. Required connections: %d-%d. Enemy type: %s."), *PendingTargetPosition.ToString(), PendingMinConnections, PendingMaxConnections, *PendingEnemyType.ToString());
+            UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: No candidate fits at %s. Required connections: %d-%d. Enemy type: %s."), *PendingTargetPosition.ToString(), PendingMinConnections, PendingMaxConnections, *PendingEnemyType.ToString());
 
             bAttachmentPending = false;
             PendingAttachmentClasses.Reset();
@@ -1824,6 +2102,19 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
     if (!PieceClass)
     {
         return ContinueOrFail();
+    }
+
+    // Once a class has been inspected in this request, avoid spawning it for the wrong slot.
+    if (const FPieceClassMetadata* Metadata = PieceClassMetadata.Find(PieceClass.Get()))
+    {
+        const bool bEnemySlot = !PendingEnemyType.IsNone();
+        if (!Metadata->bValidBounds || Metadata->ConnectionCount < PendingMinConnections
+            || Metadata->ConnectionCount > PendingMaxConnections
+            || Metadata->EnemySpawnCount != (bEnemySlot ? 1 : 0)
+            || (bEnemySlot && Metadata->EnemyType != PendingEnemyType))
+        {
+            return ContinueOrFail();
+        }
     }
 
     FActorSpawnParameters Parameters;
@@ -1851,41 +2142,44 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
         }).Num();
 
     const bool bEnemyHallway = !PendingEnemyType.IsNone();
+    TArray<UArrowComponent*> Connections = GetSortedConnections(Candidate);
+    TArray<FBox> Footprints;
+    const bool bHasFootprints = GetFootprints(Candidate, Footprints);
+    const FName CandidateEnemyType = EnemySpawnCount == 1
+        ? FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Candidate)) : NAME_None;
+    FPieceClassMetadata& Metadata = PieceClassMetadata.FindOrAdd(PieceClass.Get());
+    Metadata.ConnectionCount = Connections.Num();
+    Metadata.EnemySpawnCount = EnemySpawnCount;
+    Metadata.EnemyType = CandidateEnemyType;
+    Metadata.bValidBounds = bHasFootprints;
 
     // Only a chosen enemy placement may use an enemy hallway.
     if ((bEnemyHallway && EnemySpawnCount != 1) || (!bEnemyHallway && EnemySpawnCount != 0))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Maze: Corridor %s needs %d EnemySpawn arrows for its assigned array."), *Candidate->GetName(), bEnemyHallway ? 1 : 0);
-        Candidate->Destroy();
+        UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: Corridor %s needs %d EnemySpawn arrows for its assigned array."), *Candidate->GetName(), bEnemyHallway ? 1 : 0);
+        DiscardMazePiece(Candidate);
         return ContinueOrFail();
     }
 
     // Reject enemy hallways with a missing or ambiguous enemy type tag.
-    const FName CandidateEnemyType = bEnemyHallway ? FindEnemyTypeForSpawnPoint(FindEnemySpawnPoint(Candidate)) : NAME_None;
-
     if (bEnemyHallway && CandidateEnemyType.IsNone())
     {
         UE_LOG(LogTemp, Warning, TEXT("Maze: Corridor %s needs exactly one enemy type tag assigned in EnemyClassesByTag."), *Candidate->GetName());
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return ContinueOrFail();
     }
 
     // Other valid enemy types stay available for their own placements.
     if (bEnemyHallway && CandidateEnemyType != PendingEnemyType)
     {
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return ContinueOrFail();
     }
 
-    TArray<UArrowComponent*> Connections = SortedConnections(Candidate);
-    TArray<FBox> Footprints;
-
-    const bool bHasFootprints = GetFootprints(Candidate, Footprints);
-
     if (Connections.Num() < PendingMinConnections || Connections.Num() > PendingMaxConnections || !bHasFootprints)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Maze: %s rejected. MazeConnection arrows: %d (required %d-%d). MazeBounds valid: %s."), *Candidate->GetName(), Connections.Num(), PendingMinConnections, PendingMaxConnections, bHasFootprints ? TEXT("true") : TEXT("false"));
-        Candidate->Destroy();
+        UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: %s rejected. MazeConnection arrows: %d (required %d-%d). MazeBounds valid: %s."), *Candidate->GetName(), Connections.Num(), PendingMinConnections, PendingMaxConnections, bHasFootprints ? TEXT("true") : TEXT("false"));
+        DiscardMazePiece(Candidate);
         return ContinueOrFail();
     }
 
@@ -1899,7 +2193,9 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
 
     for (int32 Index = 0; Index < Connections.Num(); ++Index)
     {
-        if (!bHasDesignatedEntrance || Connections[Index]->ComponentHasTag(TEXT("MazeEntrance")))
+        const bool bPuzzleExit = GenerationStage == EGenerationStage::PuzzleRoom
+            && Connections[Index]->ComponentHasTag(PuzzleRoomExitTag);
+        if (!bPuzzleExit && (!bHasDesignatedEntrance || Connections[Index]->ComponentHasTag(TEXT("MazeEntrance"))))
         {
             EntranceOrder.Add(Index);
         }
@@ -1912,19 +2208,28 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
 
     for (int32 Index : EntranceOrder)
     {
-        Candidate->SetActorLocationAndRotation(PendingTargetPosition, FRotator::ZeroRotator);
-
         UArrowComponent* Arrow = Connections[Index];
 
-        // Rotate the entrance against the previous exit and match the arrow bases.
-        const float Yaw = FMath::UnwindDegrees(PendingTargetForward.Rotation().Yaw + 180.0f - Arrow->GetForwardVector().Rotation().Yaw);
+        if (IsRejectedRouteChoice(Candidate, Arrow))
+        {
+            continue;
+        }
 
-        Candidate->SetActorRotation(FRotator(0.0f, Yaw, 0.0f));
-        Candidate->SetActorLocation(Candidate->GetActorLocation() + PendingTargetPosition - Arrow->GetComponentLocation());
+        // Derive the whole pose before moving components, avoiding three world updates per try.
+        const FTransform OriginalTransform = Candidate->GetActorTransform();
+        const FVector LocalEntrance = OriginalTransform.InverseTransformPosition(Arrow->GetComponentLocation());
+        const FVector LocalForward = OriginalTransform.InverseTransformVectorNoScale(Arrow->GetForwardVector());
+
+        // Rotate the entrance against the previous exit and match the arrow bases.
+        const float Yaw = FMath::UnwindDegrees(PendingTargetForward.Rotation().Yaw + 180.0f - LocalForward.Rotation().Yaw);
+        FTransform Placement(FRotator(0.0f, Yaw, 0.0f), FVector::ZeroVector, Candidate->GetActorScale3D());
+        Placement.SetLocation(PendingTargetPosition - Placement.TransformPosition(LocalEntrance));
+        Candidate->SetActorTransform(Placement);
+        PieceGeometryCache.FindOrAdd(Candidate).bBoundsCached = false;
 
         if (FVector::DotProduct(Arrow->GetForwardVector(), PendingTargetForward.GetSafeNormal()) > -0.999f)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Maze: %s entrance %s does not face the previous exit."), *Candidate->GetName(), *Arrow->GetName());
+            UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: %s entrance %s does not face the previous exit."), *Candidate->GetName(), *Arrow->GetName());
             continue;
         }
 
@@ -1946,7 +2251,7 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
 
         if (bTouchesReservedOpening)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Maze: %s reconnects to a reserved start/end opening."), *Candidate->GetName());
+            UE_CLOG(bLogRejectedCandidates, LogTemp, Warning, TEXT("Maze: %s reconnects to a reserved start/end opening."), *Candidate->GetName());
             continue;
         }
 
@@ -1974,13 +2279,14 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
 
         Piece = Candidate;
         Entrance = Arrow;
+        RememberRoutePlacement(Piece, Entrance);
         bAttachmentPending = false;
         PendingAttachmentClasses.Reset();
 
         return EAttachmentResult::Succeeded;
     }
 
-    Candidate->Destroy();
+    DiscardMazePiece(Candidate);
 
     return ContinueOrFail();
 }
@@ -1988,7 +2294,7 @@ AMazeGenerator::EAttachmentResult AMazeGenerator::StepAttachment(AMazeActors*& P
 void AMazeGenerator::AddUnusedConnections(AMazeActors* Piece, UArrowComponent* Entrance, UArrowComponent* ReservedExit)
 {
     // Track arrows that were not used by this attachment.
-    for (UArrowComponent* Arrow : SortedConnections(Piece))
+    for (UArrowComponent* Arrow : GetSortedConnections(Piece))
     {
         if (Arrow != Entrance && Arrow != ReservedExit)
         {
@@ -2059,8 +2365,26 @@ void AMazeGenerator::Tick(float DeltaSeconds)
     }
 
     const double StartTime = FPlatformTime::Seconds();
-    const double BudgetSeconds = FMath::Clamp(GenerationTimeBudgetMs, 0.1f, 10.0f) / 1000.0;
-    const int32 SpawnLimit = FMath::Clamp(MaxCandidateSpawnsPerFrame, 1, 16);
+    const double Elapsed = StartTime - GenerationStartedAt;
+    const float Target = FMath::Max(0.5f, TargetGenerationSeconds);
+    if (!bGenerationTargetLogged && Elapsed >= Target)
+    {
+        bGenerationTargetLogged = true;
+        UE_LOG(LogTemp, Display, TEXT("Maze: %.2fs generation target exceeded; continuing the same door request. Attempts: %d. Local repairs: %d."), Target, TotalGenerationAttempts, TotalGenerationBacktracks);
+    }
+
+    if (!bGenerationTimedOut && Elapsed >= FMath::Max(Target, GenerationTimeoutSeconds))
+    {
+        bGenerationTimedOut = true;
+        UE_LOG(LogTemp, Error, TEXT("Maze: Generation timed out after %.2fs. Check bounds, connections, and Dynamic navigation; no incomplete maze will be opened."), Elapsed);
+        BeginGenerationCleanup(false);
+    }
+
+    const float BaseBudgetMs = FMath::Clamp(GenerationTimeBudgetMs, 0.1f, 10.0f);
+    const float PeakBudgetMs = FMath::Clamp(MaxGenerationTimeBudgetMs, BaseBudgetMs, 10.0f);
+    const float Urgency = FMath::Clamp(static_cast<float>(Elapsed / (Target * 0.6f)), 0.0f, 1.0f);
+    const double BudgetSeconds = FMath::Lerp(BaseBudgetMs, PeakBudgetMs, Urgency) / 1000.0;
+    const int32 SpawnLimit = FMath::Clamp(MaxCandidateSpawnsPerFrame, 1, 20);
     const int32 ActiveSerial = GenerationSerial;
 
     CandidateSpawnsThisFrame = 0;
@@ -2101,6 +2425,18 @@ bool AMazeGenerator::GenerateMaze()
     GenerationMaxJunctionSpacing = FMath::Clamp(MaxHallwaysBetweenJunctions, GenerationMinJunctionSpacing, 100);
     GenerationBranchLimit = FMath::Clamp(MaxBranchHallways, 0, 100);
     EndCapFootprintCorners.Reset();
+    PieceGeometryCache.Reset();
+    PieceClassMetadata.Reset();
+    ResetRouteSearch();
+    GenerationStartedAt = FPlatformTime::Seconds();
+    NavigationStartedAt = 0.0;
+    TotalGenerationAttempts = 0;
+    TotalGenerationBacktracks = 0;
+    bGenerationTargetLogged = false;
+    bGenerationTimedOut = false;
+    LastGenerationSeconds = 0.0f;
+    LastGenerationAttempts = 0;
+    LastGenerationBacktracks = 0;
 
     BeginGenerationCleanup(true);
     SetActorTickEnabled(true);
@@ -2111,6 +2447,20 @@ bool AMazeGenerator::GenerateMaze()
 
 void AMazeGenerator::BeginGenerationCleanup(bool bRetry)
 {
+    if (HandleSeedAttemptCleanup(bRetry))
+    {
+        return;
+    }
+
+    // Preserve the accepted prefix and forbid its last failed choice before starting over.
+    if (bRetry && !bSeedCollectionRunning && !bSeedAttemptUsesBank && TryBacktrackRoute())
+    {
+        return;
+    }
+
+    LockGenerationNavigation();
+    ResetRouteSearch();
+    PieceGeometryCache.Reset();
     // Temporary: report the stage before cleanup resets the failed layout.
     if (GenerationAttempt > 0 && GenerationStage != EGenerationStage::Idle && GenerationStage != EGenerationStage::Cleanup)
     {
@@ -2218,14 +2568,19 @@ void AMazeGenerator::StepGeneration()
 
             if (IsValid(Piece) && Piece != CurrentRoom)
             {
-                Piece->Destroy();
+                DiscardMazePiece(Piece);
             }
 
             return;
         }
 
-        if (bRetryAfterCleanup && GenerationAttempt < GenerationAttemptLimit && IsValid(CurrentRoom))
+        if (bRetryAfterCleanup && !bGenerationTimedOut && IsValid(CurrentRoom))
         {
+            // A door interaction owns all retry batches; only success or a terminal error completes it.
+            if (GenerationAttempt >= GenerationAttemptLimit)
+            {
+                GenerationAttempt = 0;
+            }
             GenerationStage = EGenerationStage::StartAttempt;
         }
         else
@@ -2249,7 +2604,14 @@ void AMazeGenerator::StepGeneration()
             return;
         }
 
+        if (!PrepareLayoutSeed())
+        {
+            BeginGenerationCleanup(false);
+            return;
+        }
+
         ++GenerationAttempt;
+        ++TotalGenerationAttempts;
         GenerationHallwayIndex = 0;
         GenerationExitHallwayIndex = 0;
         GenerationRouteRoomCount = 0;
@@ -2325,7 +2687,7 @@ void AMazeGenerator::StepGeneration()
         if (!IsValid(Exit) || Exit == Entrance || !Piece->FindComponentByClass<UMazePuzzleComponent>() || !Piece->GetClass()->ImplementsInterface(UMazeInterface::StaticClass()))
         {
             UE_LOG(LogTemp, Error, TEXT("Maze: Each puzzle room needs MazePuzzleComponent, MazeInterface, and separate entrance/ToMazeExit connection arrows."));
-            Piece->Destroy();
+            DiscardMazePiece(Piece);
             BeginGenerationCleanup(false);
             return;
         }
@@ -2374,7 +2736,7 @@ void AMazeGenerator::StepGeneration()
 
         if (Exits.Num() != 1)
         {
-            Piece->Destroy();
+            DiscardMazePiece(Piece);
             BeginGenerationCleanup(true);
             return;
         }
@@ -2480,6 +2842,8 @@ void AMazeGenerator::StepGeneration()
         }
 
         NavigationWaitStartedAt = FPlatformTime::Seconds();
+        NavigationStartedAt = NavigationWaitStartedAt;
+        UnlockGenerationNavigation();
         GenerationStage = EGenerationStage::Navigation;
         return;
 
@@ -2771,9 +3135,19 @@ void AMazeGenerator::StepCaps()
 
 void AMazeGenerator::FinishGeneration(bool bSuccess)
 {
+    if (HandleSeedAttemptFinished(bSuccess))
+    {
+        return;
+    }
+
     AMazeActors* CompletedRoom = CurrentRoom;
     const FName CompletedDoorTag = ChosenDoorTag;
     const TArray<FName> PreviousDoors = PreviousUnlockedDoorTags;
+    LastGenerationSeconds = static_cast<float>(FPlatformTime::Seconds() - GenerationStartedAt);
+    LastGenerationAttempts = TotalGenerationAttempts;
+    LastGenerationBacktracks = TotalGenerationBacktracks;
+    const double NavigationSeconds = NavigationStartedAt > 0.0
+        ? FPlatformTime::Seconds() - NavigationStartedAt : 0.0;
 
     // Commit room history only when the whole maze is accepted.
     if (bSuccess)
@@ -2808,6 +3182,7 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         ApplyDoorLocks(NextRoom, DestinationDoors);
 
         UE_LOG(LogTemp, Display, TEXT("Maze: %d main-route hallways and %d branch hallways generated, including %d enemy hallways across both paths. Navigation ready; all side openings closed."), GenerationHallwayCount, GenerationBranchCount, SpawnedEnemyHallwayActors.Num());
+        UE_LOG(LogTemp, Display, TEXT("Maze: Ready in %.2fs (target %.2fs; navigation/final setup %.2fs). Attempts: %d. Local repairs: %d."), LastGenerationSeconds, TargetGenerationSeconds, NavigationSeconds, LastGenerationAttempts, LastGenerationBacktracks);
     }
     else
     {
@@ -2825,6 +3200,11 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
 
 void AMazeGenerator::CancelGeneration()
 {
+    ResetSeedSession();
+    UnlockGenerationNavigation();
+    ResetRouteSearch();
+    PieceGeometryCache.Reset();
+    PieceClassMetadata.Reset();
     ++GenerationSerial;
     GenerationStage = EGenerationStage::Idle;
     SetActorTickEnabled(false);
@@ -2905,7 +3285,7 @@ bool AMazeGenerator::ValidateRoom(AMazeActors* Room, FName IncomingDoorTag) cons
     TSet<FName> UniqueTags;
     TSet<UArrowComponent*> UniqueArrows;
 
-    const TArray<UArrowComponent*> RoomConnections = SortedConnections(Room);
+    const TArray<UArrowComponent*> RoomConnections = GetSortedConnections(Room);
 
     for (const FName& DoorTag : RequiredDoorTags)
     {
@@ -3144,9 +3524,20 @@ bool AMazeGenerator::ChooseDoor(AMazeActors* Room, FName DoorTag)
         return false;
     }
 
-    if (!SelectPuzzleRoom())
+    if (!SelectPuzzleRoom(DoorTag))
     {
         return false;
+    }
+
+    if (!PrepareSeedSession(Room, DoorTag))
+    {
+        return false;
+    }
+
+    // Store the new assignment before generation so a death/reload retains this door's puzzle.
+    if (!bSeedCollectionRunning && !bRebuildingPuzzle)
+    {
+        if (UMazeSaveSubsystem* SaveSystem = UMazeSaveSubsystem::Get(this)) { SaveSystem->UpdateCheckpoint(); }
     }
 
     PreviousUnlockedDoorTags = UnlockedDoorTags;
@@ -3158,8 +3549,11 @@ bool AMazeGenerator::ChooseDoor(AMazeActors* Room, FName DoorTag)
 
     if (!GenerateMaze())
     {
+        // Release a prepared collection preview without losing the available choices.
+        const TArray<FName> AllowedDoors = PreviousUnlockedDoorTags;
+        CancelGeneration();
         ChosenDoorTag = NAME_None;
-        UnlockedDoorTags = PreviousUnlockedDoorTags;
+        UnlockedDoorTags = AllowedDoors;
         PreviousUnlockedDoorTags.Reset();
         LoopState = EMazeLoopState::WaitingForDoor;
         ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
@@ -3185,7 +3579,6 @@ bool AMazeGenerator::RebuildMazeAtChosenDoor()
     const bool bSavedPuzzleCompleted = bCurrentPuzzleCompleted;
 
     // A test rebuild repeats this puzzle without consuming another completion.
-    CompletedPuzzleIds.Remove(ActivePuzzleId);
     bCurrentPuzzleCompleted = false;
     bRebuildingPuzzle = true;
 
@@ -3372,7 +3765,7 @@ bool AMazeGenerator::PlayerEnteredNextRoom(AMazeActors* Room, APawn* Player)
     ActivePuzzleId = NAME_None;
     ActivePuzzleRoomClass = nullptr;
     bCurrentPuzzleCompleted = false;
-    ++RoomsCompleted;
+    RoomsCompleted = PuzzleRoomsById.IsEmpty() ? RoomsCompleted + 1 : CompletedPuzzleIds.Num();
     LoopState = bAllPuzzlesEscaped ? EMazeLoopState::Completed : EMazeLoopState::WaitingForDoor;
     ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
 
@@ -3469,7 +3862,7 @@ bool AMazeGenerator::SpawnNextRoom()
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: NextStartRoomClass needs MazeInterface, three choice arrows, a separate incoming arrow tagged %s, MazeBounds, and one RoomArrival box."), *NextRoomEntranceDoorTag.ToString());
 
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return false;
     }
 
@@ -3477,21 +3870,25 @@ bool AMazeGenerator::SpawnNextRoom()
 
     if (!IsValid(Entrance))
     {
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return false;
     }
 
-    const float Yaw = FMath::UnwindDegrees(TargetForward.Rotation().Yaw + 180.0f - Entrance->GetForwardVector().Rotation().Yaw);
-
-    Candidate->SetActorRotation(FRotator(0.0f, Yaw, 0.0f));
-    Candidate->SetActorLocation(Candidate->GetActorLocation() + TargetPosition - Entrance->GetComponentLocation());
+    const FTransform OriginalTransform = Candidate->GetActorTransform();
+    const FVector LocalEntrance = OriginalTransform.InverseTransformPosition(Entrance->GetComponentLocation());
+    const FVector LocalForward = OriginalTransform.InverseTransformVectorNoScale(Entrance->GetForwardVector());
+    const float Yaw = FMath::UnwindDegrees(TargetForward.Rotation().Yaw + 180.0f - LocalForward.Rotation().Yaw);
+    FTransform Placement(FRotator(0.0f, Yaw, 0.0f), FVector::ZeroVector, Candidate->GetActorScale3D());
+    Placement.SetLocation(TargetPosition - Placement.TransformPosition(LocalEntrance));
+    Candidate->SetActorTransform(Placement);
+    PieceGeometryCache.FindOrAdd(Candidate).bBoundsCached = false;
 
     const bool bFacingCorrectly = FVector::DotProduct(Entrance->GetForwardVector(), TargetForward.GetSafeNormal()) <= -0.999f;
     const bool bPositionMatches = FVector::Dist(Entrance->GetComponentLocation(), TargetPosition) <= FMath::Max(0.1f, ConnectionTolerance);
 
     if (!bFacingCorrectly || !bPositionMatches || OverlapsMaze(Candidate))
     {
-        Candidate->Destroy();
+        DiscardMazePiece(Candidate);
         return false;
     }
 
@@ -3545,6 +3942,7 @@ bool AMazeGenerator::CaptureStartRoomState(FMazeStartRoomSaveData& Data) const
     Data.EntranceDoorTag = CurrentRoomEntranceTag;
     Data.UnlockedDoorTags = UnlockedDoorTags;
     Data.CompletedPuzzleIds = CompletedPuzzleIds;
+    Data.DoorPuzzleAssignments = DoorPuzzleAssignments;
     Data.RoomsCompleted = RoomsCompleted;
     Data.LastRouteRoomClass = TSoftClassPtr<AMazeActors>(LastRouteRoomClass.Get());
     Data.ConsecutiveRouteRooms = ConsecutiveRouteRooms;
@@ -3611,6 +4009,21 @@ bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
         }
     }
 
+    TArray<FName> AssignedPuzzleIds;
+    for (const auto& Assignment : Data.DoorPuzzleAssignments)
+    {
+        if (!DoorTags.Contains(Assignment.Key) || !PuzzleRoomsById.Contains(Assignment.Value) || AssignedPuzzleIds.Contains(Assignment.Value)) { return false; }
+        AssignedPuzzleIds.Add(Assignment.Value);
+    }
+    for (const FName& PuzzleId : Data.CompletedPuzzleIds)
+    {
+        if (!AssignedPuzzleIds.Contains(PuzzleId))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Maze save: This checkpoint has completed puzzles without saved door assignments. Start a new run; older progressed saves cannot restore the original door mapping."));
+            return false;
+        }
+    }
+
     AMazeActors* PreviousRoom = CurrentRoom;
     AMazeActors* RestoredRoom = nullptr;
 
@@ -3655,6 +4068,7 @@ bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
     CurrentRoomEntranceTag = Data.EntranceDoorTag;
     UnlockedDoorTags = Data.UnlockedDoorTags;
     CompletedPuzzleIds = Data.CompletedPuzzleIds;
+    DoorPuzzleAssignments = Data.DoorPuzzleAssignments;
     RoomsCompleted = Data.RoomsCompleted;
     LastRouteRoomClass = Data.LastRouteRoomClass.LoadSynchronous();
     ConsecutiveRouteRooms = FMath::Clamp(Data.ConsecutiveRouteRooms, 0, 2);

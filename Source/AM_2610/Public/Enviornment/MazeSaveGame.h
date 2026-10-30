@@ -39,6 +39,10 @@ struct AM_2610_API FMazeStartRoomSaveData
     UPROPERTY(SaveGame)
     TArray<FName> CompletedPuzzleIds;
 
+    // Door tags retain their puzzle across checkpoints, reloads, and completed-door replays.
+    UPROPERTY(SaveGame)
+    TMap<FName, FName> DoorPuzzleAssignments;
+
     UPROPERTY(SaveGame)
     int32 RoomsCompleted = 0;
 

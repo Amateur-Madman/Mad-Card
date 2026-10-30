@@ -6,6 +6,7 @@
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Misc/Crc.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -105,6 +106,17 @@ bool UMazeSaveSubsystem::CanLoadSlot(int32 SlotIndex) const
     if (!bStorageReady || !IsValid(Save) || !Save->RunId.IsValid() || !Save->Checkpoint.bValid || Save->GameplayLevel.IsNone() || Save->MainMenuLevel.IsNone())
     {
         return false;
+    }
+
+    // Older progressed saves cannot identify which completed puzzle belonged to each door.
+    for (const FName& PuzzleId : Save->Checkpoint.CompletedPuzzleIds)
+    {
+        bool bHasAssignment = false;
+        for (const auto& Assignment : Save->Checkpoint.DoorPuzzleAssignments)
+        {
+            if (Assignment.Value == PuzzleId) { bHasAssignment = true; break; }
+        }
+        if (!bHasAssignment) { return false; }
     }
 
     const FMazeSavedRunState* State = RunLedger->RunStates.Find(Save->RunId);
@@ -323,6 +335,9 @@ void UMazeSaveSubsystem::RegisterGenerator(AMazeGenerator* Generator)
         ActiveRun->RunId = FGuid::NewGuid();
         ActiveRun->GameplayLevel = FName(*UGameplayStatics::GetCurrentLevelName(Generator, true));
     }
+
+    // A fresh run gets a new ID. Loading or retrying keeps the saved run's puzzle choices.
+    Generator->SetPuzzleRunSeed(static_cast<int32>(FCrc::StrCrc32(*ActiveRun->RunId.ToString())));
 
     if (!bRestorePending)
     {
@@ -764,4 +779,4 @@ void UMazeSaveSubsystem::ReportRestoreTimeout()
     bRestoreFailed = true;
     OnLoadFinished.Broadcast(false);
     Fail(TEXT("Player/save setup timed out. Add MazePlayerSaveComponent to the possessed player, check MazeGenerator, and add PlayerRespawn to both start rooms."));
-}
+}   

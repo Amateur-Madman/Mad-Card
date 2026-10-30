@@ -14,12 +14,14 @@ class UPrimitiveComponent;
 class APawn;
 class ANavMeshBoundsVolume;
 class UMazePuzzleComponent;
+class UNavigationSystemV1;
 struct FMazeStartRoomSaveData;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnMazeGenerationFinished, AMazeActors*, Room, FName, DoorTag, bool, bSuccess);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMazePuzzleCompleted, FName, PuzzleId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllMazePuzzlesEscaped);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMazeSeedCollectionFinished, bool, bReachedTarget);
 
 UENUM(BlueprintType)
 enum class EMazeLoopState : uint8
@@ -38,6 +40,12 @@ class AM_2610_API AMazeGenerator : public AActor
 
 public:
     AMazeGenerator();
+
+    // Derived from the saved run ID. New runs vary; checkpoint retries keep the same choices.
+    void SetPuzzleRunSeed(int32 InSeed) { PuzzleRunSeed = InSeed == 0 ? 1 : InSeed; }
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Puzzles")
+    int32 PuzzleRunSeed = 0;
 
     // Enemy hallway Blueprints. The same class can be placed more than once.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Enemies")
@@ -183,7 +191,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Branches", meta = (ClampMin = "0", ClampMax = "10"))
     int32 MaxBranchHallways = 8;
 
-    // Number of layout attempts if the main route cannot be completed.
+    // Attempts per retry batch. The same door request continues until ready or timed out.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Layout", meta = (ClampMin = "1", ClampMax = "20"))
     int32 LayoutAttempts = 20;
 
@@ -194,6 +202,102 @@ public:
     // Stop starting more generation work after this frame budget is used.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance", meta = (ClampMin = "0.1", ClampMax = "10.0"))
     float GenerationTimeBudgetMs = 2.0f;
+
+    // Soft target, including navigation. It never accepts an unfinished maze to meet this time.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance", meta = (ClampMin = "0.5", Units = "s"))
+    float TargetGenerationSeconds = 5.0f;
+
+    // Gradually raise the frame budget toward this limit as the target approaches.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance", meta = (ClampMin = "0.1", ClampMax = "10.0", Units = "ms"))
+    float MaxGenerationTimeBudgetMs = 6.0f;
+
+    // Recover inside the same door request. Stop impossible layouts instead of waiting forever.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance", meta = (ClampMin = "5.0", Units = "s"))
+    float GenerationTimeoutSeconds = 30.0f;
+
+    // Try alternatives at earlier route placements before discarding the whole layout.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance", meta = (ClampMin = "0", ClampMax = "256"))
+    int32 MaxLocalBacktracks = 96;
+
+    // Batch navigation changes while placing/retrying pieces, then build the final layout.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Performance")
+    bool bBatchNavigationBuild = true;
+
+    // Enable only when diagnosing piece alignment; rejected candidates are normal.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Debug")
+    bool bLogRejectedCandidates = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Performance")
+    float LastGenerationSeconds = 0.0f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Performance")
+    int32 LastGenerationAttempts = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Performance")
+    int32 LastGenerationBacktracks = 0;
+
+    // PIE only. Use the first room's Door1 once to collect all four start/door setups.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
+    bool bCollectSeedsInEditor = false;
+
+    // On the next Door1 interaction in PIE, replace all three files and collect the full loop.
+    // Consumed once on the running actor. Disable the level/default checkbox to resume next PIE session.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
+    bool bReplaceSeedBankOnCollection = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
+    bool bUseSavedSeeds = true;
+
+    // Enable for the deliverable after collecting banks for every reachable start/door setup.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
+    bool bRequireSavedSeeds = false;
+
+    // Three files directly in MazeSeeds. Maximum total entries per puzzle file; at least 16.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds", meta = (ClampMin = "16", ClampMax = "1000"))
+    int32 MaxSavedSeedsPerPuzzle = 50;
+
+    // Optional explicit order: index 0 = gen 1, index 1 = gen 2, index 2 = gen 3.
+    // Leave empty to use the three puzzle IDs in alphabetical order.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
+    TArray<FName> SeedFilePuzzleIds;
+
+    // Zero accepts any successful time. Otherwise slower candidates are skipped.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds", meta = (ClampMin = "0.0", Units = "s"))
+    float MaxAcceptedSeedSeconds = 5.0f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    bool bSeedCollectionRunning = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 SavedSeedCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 TargetSavedSeedCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 TestedSeedCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 SeedSetupCount = 0;
+
+    // A bucket is one setup, puzzle, and preceding room history. Every bucket needs coverage.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 CoveredSeedBuckets = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 RequiredSeedBuckets = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    int32 CurrentLayoutSeed = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    FString CurrentSeedBankFile;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Seeds")
+    FString SeedCollectionStatus;
+
+    UPROPERTY(BlueprintAssignable, Category = "Maze|Seeds")
+    FOnMazeSeedCollectionFinished OnSeedCollectionFinished;
 
     // Initializes repeatable random choices. Same inputs and seed repeat the layout.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Layout")
@@ -278,6 +382,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Puzzles")
     TArray<FName> CompletedPuzzleIds;
 
+    // Permanent within a run. Completed doors keep their puzzle when replayed.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Puzzles")
+    TMap<FName, FName> DoorPuzzleAssignments;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Puzzles")
     FName ActivePuzzleId = NAME_None;
 
@@ -336,7 +444,7 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Loop")
     int32 RoomsCompleted = 0;
 
-    // Fired after generation succeeds or all layout attempts fail.
+    // Fired once when the door request succeeds, times out, or encounters a configuration error.
     UPROPERTY(BlueprintAssignable, Category = "Maze|Loop")
     FOnMazeGenerationFinished OnMazeGenerationFinished;
 
@@ -378,6 +486,89 @@ protected:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+    struct FSeedBankEntry
+    {
+        FName PuzzleId = NAME_None;
+        FString Profile;
+        FString PreviousRoomClass;
+        int32 PreviousRoomCount = 0;
+        int32 Seed = 0;
+        float Seconds = 0.0f;
+    };
+
+    struct FSeedCollectionSetup
+    {
+        TWeakObjectPtr<AMazeActors> Room;
+        FName DoorTag = NAME_None;
+        FName EntranceDoorTag = NAME_None;
+        FString Profile;
+    };
+
+    struct FSeedCollectionBucket
+    {
+        int32 SetupIndex = INDEX_NONE;
+        FName PuzzleId = NAME_None;
+        TWeakObjectPtr<UClass> PreviousRoomClass;
+        int32 PreviousRoomCount = 0;
+        int32 Target = 0;
+        int32 Saved = 0;
+    };
+
+    TArray<FSeedBankEntry> SeedBankEntries;
+    TArray<FSeedCollectionBucket> SeedCollectionBuckets;
+    TArray<FSeedCollectionSetup> SeedCollectionSetups;
+
+    // The live room stays in place while a separate next-room preview is tested in PIE.
+    UPROPERTY(Transient)
+    TObjectPtr<AMazeActors> SeedCollectionSourceRoom = nullptr;
+
+    UPROPERTY(Transient)
+    TObjectPtr<AMazeActors> SeedCollectionPreviewRoom = nullptr;
+
+    FName SeedCollectionSourceDoorTag = NAME_None;
+    FName SeedCollectionSourceEntranceTag = NAME_None;
+    FName SeedCollectionOriginalPuzzleId = NAME_None;
+
+    UPROPERTY(Transient)
+    TSubclassOf<AMazeActors> SeedCollectionOriginalPuzzleClass;
+
+    FRandomStream SeedCollectionOriginalRandomStream;
+    FTransform SeedCollectionOriginalNavTransform = FTransform::Identity;
+    TArray<int32> SavedSeedCandidates;
+    TMap<FString, int32> LastUsedBankSeeds;
+    FString SeedBankProfile;
+    FName SeedBankFilePuzzleId = NAME_None;
+    FString RuntimeSeedBucketKey;
+    int32 SavedSeedCandidateIndex = 0;
+    int32 SeedCollectionBucketIndex = -1;
+    int32 NextSeedToTest = 1;
+    bool bSeedAttemptUsesBank = false;
+    bool bSeedCollectionEnding = false;
+    bool bSeedCollectionInternalCleanup = false;
+    bool bSeedCollectionReachedTarget = false;
+    bool bSeedSessionPrepared = false;
+    UPROPERTY(Transient)
+    TSubclassOf<AMazeActors> SeedCollectionOriginalRoomClass;
+    int32 SeedCollectionOriginalRoomCount = 0;
+
+    bool PrepareSeedSession(AMazeActors* Room, FName DoorTag);
+    FString BuildSeedBankProfile(AMazeActors* Room, FName DoorTag, FName EntranceDoorTag = NAME_None) const;
+    TArray<FName> GetSeedFilePuzzleIds() const;
+    bool SetSeedBankPuzzleFile(FName PuzzleId);
+    bool LoadPuzzleSeedBankFile(bool bRequired);
+    bool LoadSeedBankFile(bool bRequired);
+    bool SaveSeedBankFile();
+    bool WriteSeedBankFile();
+    bool PrepareSeedCollectionSetups(AMazeActors* Room, FName DoorTag);
+    bool PrepareSeedCollectionBuckets();
+    void UpdateSeedCollectionCoverage();
+    bool PrepareLayoutSeed();
+    bool HandleSeedAttemptCleanup(bool bRetry);
+    bool HandleSeedAttemptFinished(bool bSuccess);
+    void QueueSeedCollectionCleanup(bool bContinue);
+    void FinishSeedCollection();
+    void ResetSeedSession();
+
     enum class EGenerationStage : uint8
     {
         Idle,
@@ -414,6 +605,82 @@ private:
     };
 
     TMap<TWeakObjectPtr<UArrowComponent>, FBranchRoomState> BranchRoomStates;
+
+    // Only layout geometry is cached. Tags/bounds must be fixed while a request is generating.
+    struct FCachedPieceGeometry
+    {
+        FTransform Transform = FTransform::Identity;
+        TArray<FBox> Boxes;
+        TArray<TWeakObjectPtr<UArrowComponent>> Connections;
+        bool bConnectionsCached = false;
+        bool bBoundsCached = false;
+    };
+
+    struct FPieceClassMetadata
+    {
+        int32 ConnectionCount = 0;
+        int32 EnemySpawnCount = 0;
+        FName EnemyType = NAME_None;
+        bool bValidBounds = false;
+    };
+
+    struct FRouteChoice
+    {
+        TWeakObjectPtr<UClass> PieceClass;
+        FName EntranceName = NAME_None;
+    };
+
+    // A checkpoint precedes one accepted route piece. Failed suffixes can be discarded locally.
+    struct FRouteCheckpoint
+    {
+        EGenerationStage Stage = EGenerationStage::Idle;
+        int32 ActorCount = 0;
+        int32 HallwayIndex = 0;
+        int32 ExitHallwayIndex = 0;
+        int32 RouteRoomCount = 0;
+        int32 HallwaysSinceRoom = 0;
+        int32 NextJunctionAt = 0;
+        int32 ConsecutiveRooms = 0;
+        TWeakObjectPtr<UClass> LastRoomClass;
+        TWeakObjectPtr<UArrowComponent> PreviousExit;
+        TWeakObjectPtr<UArrowComponent> End;
+        FTransform EndTransform = FTransform::Identity;
+        TWeakObjectPtr<AMazeActors> PuzzleRoom;
+        TArray<TWeakObjectPtr<UArrowComponent>> Openings;
+        TArray<TWeakObjectPtr<UArrowComponent>> BlockedOpenings;
+        TMap<TWeakObjectPtr<UArrowComponent>, FBranchRoomState> BranchStates;
+        TArray<TWeakObjectPtr<AMazeActors>> EnemyHallways;
+        TArray<FName> RemainingEnemies;
+        TMap<TWeakObjectPtr<AMazeActors>, TArray<TWeakObjectPtr<AMazeActors>>> PieceLinks;
+        TSet<TWeakObjectPtr<AMazeActors>> HallwayPieces;
+        TArray<FRouteChoice> RejectedChoices;
+        FRouteChoice Choice;
+    };
+
+    mutable TMap<TWeakObjectPtr<AMazeActors>, FCachedPieceGeometry> PieceGeometryCache;
+    TMap<TWeakObjectPtr<UClass>, FPieceClassMetadata> PieceClassMetadata;
+    TArray<FRouteCheckpoint> RouteCheckpoints;
+    FRouteCheckpoint PendingRouteCheckpoint;
+    TArray<FRouteChoice> RejectedRouteChoices;
+    bool bRouteCheckpointPending = false;
+    int32 LocalBacktracksThisAttempt = 0;
+    int32 TotalGenerationAttempts = 0;
+    int32 TotalGenerationBacktracks = 0;
+    double GenerationStartedAt = 0.0;
+    double NavigationStartedAt = 0.0;
+    bool bGenerationTargetLogged = false;
+    bool bGenerationTimedOut = false;
+    TWeakObjectPtr<UNavigationSystemV1> GenerationNavigationLockOwner;
+
+    TArray<UArrowComponent*> GetSortedConnections(AMazeActors* Piece) const;
+    void DiscardMazePiece(AMazeActors* Piece);
+    void CaptureRouteCheckpoint();
+    void RememberRoutePlacement(AMazeActors* Piece, UArrowComponent* Entrance);
+    bool IsRejectedRouteChoice(AMazeActors* Piece, UArrowComponent* Entrance) const;
+    bool TryBacktrackRoute();
+    void ResetRouteSearch();
+    void LockGenerationNavigation();
+    void UnlockGenerationNavigation();
     FBranchRoomState GenerationBranchRoomState;
     int32 GenerationBranchRoomCount = 0;
     bool bTryingBranchRoom = false;
@@ -437,7 +704,7 @@ private:
     bool bPuzzlePrepared = false;
     bool bRebuildingPuzzle = false;
 
-    bool SelectPuzzleRoom();
+    bool SelectPuzzleRoom(FName DoorTag = NAME_None);
     TArray<FName> GetRemainingPuzzleIds() const;
     UMazePuzzleComponent* GetPuzzleComponent() const;
 
