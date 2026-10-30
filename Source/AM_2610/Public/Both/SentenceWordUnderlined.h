@@ -21,7 +21,7 @@ public:
 
 	TArray<FString> HardArray = { TEXT("You'll never escape the maze"), TEXT("I was crazy once"), TEXT("You thought I'd let you go") };
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	class UWrapBox* WordOrPhrase;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
@@ -31,5 +31,5 @@ public:
 	TSubclassOf<UUserWidget> SpaceWidgetClass;
 
 private:
-	void Setup(FString bWordOrPhrase);
+	void Setup(FString& bWordOrPhrase);
 };

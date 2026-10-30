@@ -18,7 +18,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = Default)
     void InitializeWord(FString NewWord);
 
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     class UHorizontalBox* Word;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)

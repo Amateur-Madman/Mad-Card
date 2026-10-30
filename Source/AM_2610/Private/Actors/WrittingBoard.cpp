@@ -29,6 +29,8 @@ void AWrittingBoard::BeginPlay()
 
 	if (CanvasComponent)
 	{
+		CanvasComponent->SetWidgetClass(SentenceWordUnderlinedClass);
+		CanvasComponent->InitWidget();
 		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
 
 		if (BaseWidget)

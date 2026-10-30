@@ -32,7 +32,7 @@ void USentenceWordUnderlined::SetupAccordingToDiff()
 
 }
 
-void USentenceWordUnderlined::Setup(FString bWordOrPhrase)
+void USentenceWordUnderlined::Setup(FString& bWordOrPhrase)
 {
     if (!WordOrPhrase || !WordCharUnderlinedClass) return;
 

@@ -3,7 +3,6 @@
 
 #include "Both/CharUnderlined.h"
 #include "Components/TextBlock.h"
-#include "../AM_2610.h"
 
 void UCharUnderlined::SetLetter(FString bLetter)
 {
