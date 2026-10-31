@@ -36,7 +36,7 @@ void AWrittingBoard::BeginPlay()
 			if (MainTextWidget)
 			{
 				MainTextWidget->SetupAccordingToDiff();
-				MainTextWidget->ForceLayoutPrepass();
+				//MainTextWidget->ForceLayoutPrepass();
 			}
 		}
 	}

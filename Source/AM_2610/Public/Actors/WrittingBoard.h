@@ -15,7 +15,7 @@ public:
 	// Sets default values for this actor's properties
 	AWrittingBoard();
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Components")
 	class UWidgetComponent* CanvasComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
