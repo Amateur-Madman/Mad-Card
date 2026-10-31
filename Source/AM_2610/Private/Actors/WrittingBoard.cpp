@@ -15,7 +15,7 @@ AWrittingBoard::AWrittingBoard()
 	CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
 	SetRootComponent(CanvasComponent);
 	CanvasComponent->SetDrawSize(FVector2D(1920.0f, 1080.0f));
-	CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
+	//CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
 }
 
 // Called when the game starts or when spawned
