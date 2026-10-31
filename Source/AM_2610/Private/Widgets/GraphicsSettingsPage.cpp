@@ -29,7 +29,7 @@ void UGraphicsSettingsPage::NativeConstruct()
 	QualityCombo->OnSelectionChanged.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleQualityChanged);
 	FPSLimitCombo->OnSelectionChanged.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleFPSLimitChanged);
 	VSyncCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleVSyncChanged);
-	RenderScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleRenderScaleChanged);
+	BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleBrightnessChanged);
 	ApplyButton->OnBackgroundButtonClicked.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleApplyClicked);
 	KeepButton->OnBackgroundButtonClicked.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleKeepClicked);
 	RevertButton->OnBackgroundButtonClicked.AddUniqueDynamic(this, &UGraphicsSettingsPage::HandleRevertClicked);
@@ -179,41 +179,38 @@ void UGraphicsSettingsPage::PopulateFrameLimits()
 
 void UGraphicsSettingsPage::LoadFromSettings()
 {
-	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
+	// Pull the current applied values from the game instance, then set the widgets
+	// (their change events just re-stage the same values).
+	if (const UBaseGameInstance* GI = GetGI())
+	{
+		Pending = GI->GetGraphicsSettings();
+	}
 
-	// Set the staged values first, then the widgets (their change events just re-stage the same values).
-	PendingRes = GUS->GetScreenResolution();
-	PendingMode = GUS->GetFullscreenMode();
-	bPendingVSync = GUS->IsVSyncEnabled();
-	PendingQuality = GUS->GetOverallScalabilityLevel(); // -1 if the groups are mixed
-	PendingRenderScale = GUS->GetResolutionScaleNormalized();
-	PendingFPS = GUS->GetFrameRateLimit();
-
-	const int32 ResIndex = Resolutions.IndexOfByKey(PendingRes);
+	const int32 ResIndex = Resolutions.IndexOfByKey(Pending.Resolution);
 	ResolutionCombo->SetSelectedIndex(ResIndex != INDEX_NONE ? ResIndex : 0);
 
-	const int32 ModeIndex = WindowModes.IndexOfByKey(PendingMode);
+	const int32 ModeIndex = WindowModes.IndexOfByKey(Pending.WindowMode);
 	WindowModeCombo->SetSelectedIndex(ModeIndex != INDEX_NONE ? ModeIndex : 0);
 
-	VSyncCheck->SetIsChecked(bPendingVSync);
+	VSyncCheck->SetIsChecked(Pending.bVSync);
 
-	if (PendingQuality >= 0 && PendingQuality < NumQualityLevels)
+	if (Pending.Quality >= 0 && Pending.Quality < NumQualityLevels)
 	{
-		QualityCombo->SetSelectedIndex(PendingQuality);
+		QualityCombo->SetSelectedIndex(Pending.Quality);
 	}
 	else
 	{
 		QualityCombo->ClearSelection(); // custom / mixed settings: show nothing selected
 	}
 
-	RenderScaleSlider->SetValue(PendingRenderScale);
+	BrightnessSlider->SetValue(Pending.Brightness);
 
-	const int32 FPSIndex = FrameLimits.IndexOfByPredicate([this](float L) { return FMath::IsNearlyEqual(L, PendingFPS, 0.5f); });
+	const int32 FPSIndex = FrameLimits.IndexOfByPredicate([this](float L) { return FMath::IsNearlyEqual(L, Pending.FrameLimit, 0.5f); });
 	FPSLimitCombo->SetSelectedIndex(FPSIndex != INDEX_NONE ? FPSIndex : FrameLimits.Num() - 1);
 
 	UpdatePreviewTarget(/*bSnap=*/true);
 	UpdateLabels();
-	UpdateRenderScaleLabel();
+	UpdateBrightnessLabel();
 	RefreshApplyState();
 }
 
@@ -226,7 +223,7 @@ void UGraphicsSettingsPage::HandleResolutionChanged(FString SelectedItem, ESelec
 	const int32 Index = ResolutionCombo->GetSelectedIndex();
 	if (Resolutions.IsValidIndex(Index))
 	{
-		PendingRes = Resolutions[Index];
+		Pending.Resolution = Resolutions[Index];
 	}
 
 	UpdatePreviewTarget();
@@ -239,7 +236,7 @@ void UGraphicsSettingsPage::HandleWindowModeChanged(FString SelectedItem, ESelec
 	const int32 Index = WindowModeCombo->GetSelectedIndex();
 	if (WindowModes.IsValidIndex(Index))
 	{
-		PendingMode = WindowModes[Index];
+		Pending.WindowMode = WindowModes[Index];
 	}
 	RefreshApplyState();
 }
@@ -249,7 +246,7 @@ void UGraphicsSettingsPage::HandleQualityChanged(FString SelectedItem, ESelectIn
 	const int32 Index = QualityCombo->GetSelectedIndex();
 	if (Index >= 0 && Index < NumQualityLevels)
 	{
-		PendingQuality = Index;
+		Pending.Quality = Index;
 	}
 	RefreshApplyState();
 }
@@ -259,53 +256,37 @@ void UGraphicsSettingsPage::HandleFPSLimitChanged(FString SelectedItem, ESelectI
 	const int32 Index = FPSLimitCombo->GetSelectedIndex();
 	if (FrameLimits.IsValidIndex(Index))
 	{
-		PendingFPS = FrameLimits[Index];
+		Pending.FrameLimit = FrameLimits[Index];
 	}
 	RefreshApplyState();
 }
 
 void UGraphicsSettingsPage::HandleVSyncChanged(bool bIsChecked)
 {
-	bPendingVSync = bIsChecked;
+	Pending.bVSync = bIsChecked;
 	RefreshApplyState();
 }
 
-void UGraphicsSettingsPage::HandleRenderScaleChanged(float Value)
+void UGraphicsSettingsPage::HandleBrightnessChanged(float Value)
 {
-	PendingRenderScale = Value;
-	UpdateRenderScaleLabel();
+	Pending.Brightness = Value;
+	UpdateBrightnessLabel();
 	RefreshApplyState();
 }
 
 void UGraphicsSettingsPage::HandleApplyClicked()
 {
-	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
+	UBaseGameInstance* GI = GetGI();
+	if (!GI)
+	{
+		return;
+	}
 
 	// Snapshot everything so a revert restores the full pre-Apply state.
-	PrevRes = GUS->GetScreenResolution();
-	PrevMode = GUS->GetFullscreenMode();
-	bPrevVSync = GUS->IsVSyncEnabled();
-	PrevQuality = GUS->GetOverallScalabilityLevel();
-	PrevRenderScale = GUS->GetResolutionScaleNormalized();
-	PrevFPS = GUS->GetFrameRateLimit();
+	Prev = GI->GetGraphicsSettings();
+	const bool bDisplayChanged = Pending.IsDisplayDifferent(Prev);
 
-	const bool bDisplayChanged = (PendingRes != PrevRes) || (PendingMode != PrevMode);
-
-	GUS->SetScreenResolution(PendingRes);
-	GUS->SetFullscreenMode(PendingMode);
-	GUS->SetVSyncEnabled(bPendingVSync);
-	GUS->SetFrameRateLimit(PendingFPS);
-
-	// Order matters: a preset also resets render scale to its own value, so the slider is applied after it and wins.
-	if (PendingQuality >= 0 && PendingQuality != PrevQuality)
-	{
-		GUS->SetOverallScalabilityLevel(PendingQuality);
-	}
-	GUS->SetResolutionScaleNormalized(PendingRenderScale);
-
-	// Split apply (instead of ApplySettings) so nothing is written to the ini until the player confirms.
-	GUS->ApplyNonResolutionSettings();
-	GUS->ApplyResolutionSettings(false);
+	GI->ApplyGraphics(Pending);
 
 	if (bDisplayChanged)
 	{
@@ -313,8 +294,8 @@ void UGraphicsSettingsPage::HandleApplyClicked()
 	}
 	else
 	{
-		// Quality / scale / FPS / VSync can't strand the player, so no confirmation needed.
-		GUS->SaveSettings();
+		// Quality / brightness / FPS / VSync can't strand the player, so no confirmation needed.
+		GI->CommitGraphics();
 	}
 
 	RefreshApplyState();
@@ -322,7 +303,10 @@ void UGraphicsSettingsPage::HandleApplyClicked()
 
 void UGraphicsSettingsPage::HandleKeepClicked()
 {
-	UGameUserSettings::GetGameUserSettings()->SaveSettings();
+	if (UBaseGameInstance* GI = GetGI())
+	{
+		GI->CommitGraphics();
+	}
 	HideConfirmPanel();
 	RefreshApplyState();
 }
@@ -338,7 +322,7 @@ void UGraphicsSettingsPage::HandleRevertClicked()
 
 void UGraphicsSettingsPage::UpdatePreviewTarget(bool bSnap)
 {
-	const float Aspect = static_cast<float>(PendingRes.X) / static_cast<float>(FMath::Max(1, PendingRes.Y));
+	const float Aspect = static_cast<float>(Pending.Resolution.X) / static_cast<float>(FMath::Max(1, Pending.Resolution.Y));
 
 	// Fit the aspect ratio inside the max box.
 	float W = static_cast<float>(PreviewMaxSize.X);
@@ -353,7 +337,7 @@ void UGraphicsSettingsPage::UpdatePreviewTarget(bool bSnap)
 	float Alpha = 1.f;
 	if (MaxResWidth > MinResWidth)
 	{
-		Alpha = FMath::Clamp(static_cast<float>(PendingRes.X - MinResWidth) / static_cast<float>(MaxResWidth - MinResWidth), 0.f, 1.f);
+		Alpha = FMath::Clamp(static_cast<float>(Pending.Resolution.X - MinResWidth) / static_cast<float>(MaxResWidth - MinResWidth), 0.f, 1.f);
 	}
 	const float Scale = FMath::Lerp(MinPreviewScale, 1.f, Alpha);
 
@@ -367,23 +351,19 @@ void UGraphicsSettingsPage::UpdatePreviewTarget(bool bSnap)
 
 void UGraphicsSettingsPage::UpdateLabels()
 {
-	ResolutionLabel->SetText(FText::FromString(ResolutionToString(PendingRes)));
-	AspectLabel->SetText(FText::FromString(AspectToString(PendingRes)));
+	ResolutionLabel->SetText(FText::FromString(ResolutionToString(Pending.Resolution)));
+	AspectLabel->SetText(FText::FromString(AspectToString(Pending.Resolution)));
 }
 
-void UGraphicsSettingsPage::UpdateRenderScaleLabel()
+void UGraphicsSettingsPage::UpdateBrightnessLabel()
 {
-	if (!RenderScaleLabel)
+	if (!BrightnessLabel)
 	{
 		return;
 	}
 
-	// Normalized 0..1 maps onto the engine's min..max screen percentage.
-	float CurrentNormalized = 1.f, CurrentValue = 100.f, Min = 100.f, Max = 100.f;
-	UGameUserSettings::GetGameUserSettings()->GetResolutionScaleInformationEx(CurrentNormalized, CurrentValue, Min, Max);
-	const float Percent = FMath::Lerp(Min, Max, PendingRenderScale);
-
-	RenderScaleLabel->SetText(FText::FromString(FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Percent))));
+	BrightnessLabel->SetText(FText::FromString(
+		FString::Printf(TEXT("%d%%"), FMath::RoundToInt(Pending.Brightness * 100.f))));
 }
 
 void UGraphicsSettingsPage::RefreshApplyState()
@@ -393,13 +373,8 @@ void UGraphicsSettingsPage::RefreshApplyState()
 
 bool UGraphicsSettingsPage::HasPendingChanges() const
 {
-	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
-	return PendingRes != GUS->GetScreenResolution()
-		|| PendingMode != GUS->GetFullscreenMode()
-		|| bPendingVSync != GUS->IsVSyncEnabled()
-		|| (PendingQuality >= 0 && PendingQuality != GUS->GetOverallScalabilityLevel())
-		|| !FMath::IsNearlyEqual(PendingRenderScale, GUS->GetResolutionScaleNormalized(), 0.005f)
-		|| !FMath::IsNearlyEqual(PendingFPS, GUS->GetFrameRateLimit(), 0.5f);
+	const UBaseGameInstance* GI = GetGI();
+	return GI && Pending.HasChangesFrom(GI->GetGraphicsSettings());
 }
 
 FString UGraphicsSettingsPage::ResolutionToString(const FIntPoint& Res)
@@ -457,18 +432,10 @@ void UGraphicsSettingsPage::UpdateConfirmText()
 
 void UGraphicsSettingsPage::RestorePreviousSettings()
 {
-	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
-	GUS->SetScreenResolution(PrevRes);
-	GUS->SetFullscreenMode(PrevMode);
-	GUS->SetVSyncEnabled(bPrevVSync);
-	GUS->SetFrameRateLimit(PrevFPS);
-	if (PrevQuality >= 0) // a custom/mixed preset can't be restored through the overall level
+	if (UBaseGameInstance* GI = GetGI())
 	{
-		GUS->SetOverallScalabilityLevel(PrevQuality);
+		GI->ApplyGraphics(Prev);
 	}
-	GUS->SetResolutionScaleNormalized(PrevRenderScale);
-	GUS->ApplyNonResolutionSettings();
-	GUS->ApplyResolutionSettings(false);
 
 	HideConfirmPanel();
 	LoadFromSettings(); // snap the controls and preview back

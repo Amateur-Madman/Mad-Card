@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "GenericPlatform/GenericWindow.h"
+#include "Utility/BaseGameInstance.h" // FGraphicsSettings
 #include "GraphicsSettingsPage.generated.h"
 
 class UComboBoxString;
@@ -15,11 +16,14 @@ class UWidget;
 
 /**
  * Graphics page for the settings menu (WidgetSwitcher page 2).
- * Resolution / window mode / VSync / quality preset / render scale / FPS limit.
+ * Resolution / window mode / VSync / quality preset / brightness / FPS limit.
  * A monitor-frame preview resizes to the pending resolution's aspect ratio, and a
  * "keep these settings?" countdown rolls back a bad display mode.
  *
- * Nothing is applied until Apply is pressed; nothing is written to the ini until Keep
+ * All values are owned by UBaseGameInstance (GetGraphicsSettings / ApplyGraphics / CommitGraphics).
+ * This page only stages values.
+ *
+ * Nothing is applied until Apply is pressed; nothing is written to disk until Keep
  * (or immediately, for changes that can't strand the player).
  */
 UCLASS()
@@ -45,15 +49,15 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UCheckBox* VSyncCheck;
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UComboBoxString* QualityCombo;
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UComboBoxString* FPSLimitCombo;
-	/** Configure 0..1 in the Designer (Step Size 0.05 feels good). */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) USlider* RenderScaleSlider;
+	/** Configure 0..1 in the Designer (Step Size 0.05 feels good). 0.5 = engine default brightness. */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) USlider* BrightnessSlider;
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UButtonWithText* ApplyButton;
 
 	/** Monitor "screen" - put your frame image/border inside this SizeBox. It gets resized. */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) USizeBox* PreviewSizeBox;
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UTextBlock* ResolutionLabel;
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UTextBlock* AspectLabel;
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional)) UTextBlock* RenderScaleLabel;
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional)) UTextBlock* BrightnessLabel;
 
 	/** Overlay shown during the revert countdown (dimmer + text + two buttons). */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget)) UWidget* ConfirmPanel;
@@ -88,7 +92,7 @@ private:
 	UFUNCTION() void HandleQualityChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleFPSLimitChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 	UFUNCTION() void HandleVSyncChanged(bool bIsChecked);
-	UFUNCTION() void HandleRenderScaleChanged(float Value);
+	UFUNCTION() void HandleBrightnessChanged(float Value);
 	UFUNCTION() void HandleApplyClicked();
 	UFUNCTION() void HandleKeepClicked();
 	UFUNCTION() void HandleRevertClicked();
@@ -103,7 +107,7 @@ private:
 	// Preview / labels
 	void UpdatePreviewTarget(bool bSnap = false);
 	void UpdateLabels();
-	void UpdateRenderScaleLabel();
+	void UpdateBrightnessLabel();
 	void RefreshApplyState();
 	static FString ResolutionToString(const FIntPoint& Res);
 	static FString AspectToString(const FIntPoint& Res);
@@ -115,6 +119,7 @@ private:
 	void HideConfirmPanel();
 
 	bool HasPendingChanges() const;
+	UBaseGameInstance* GetGI() const { return GetGameInstance<UBaseGameInstance>(); }
 
 	// Options (parallel to combo box indices)
 	TArray<FIntPoint> Resolutions;
@@ -124,20 +129,10 @@ private:
 	int32 MaxResWidth = 0;
 
 	// Staged values (not applied until Apply)
-	FIntPoint PendingRes = FIntPoint(1920, 1080);
-	EWindowMode::Type PendingMode = EWindowMode::Windowed;
-	bool bPendingVSync = false;
-	int32 PendingQuality = 3;        // 0 Low .. 4 Cinematic, -1 = custom/mixed
-	float PendingRenderScale = 1.f;  // normalized 0..1
-	float PendingFPS = 0.f;
+	FGraphicsSettings Pending;
 
-	// Values to roll back to
-	FIntPoint PrevRes = FIntPoint(1920, 1080);
-	EWindowMode::Type PrevMode = EWindowMode::Windowed;
-	bool bPrevVSync = false;
-	int32 PrevQuality = 3;
-	float PrevRenderScale = 1.f;
-	float PrevFPS = 0.f;
+	// Snapshot taken at Apply, restored on revert
+	FGraphicsSettings Prev;
 
 	// Preview animation
 	FVector2D CurrentPreviewSize = FVector2D::ZeroVector;

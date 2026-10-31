@@ -4,11 +4,38 @@
 
 #include "CoreMinimal.h"
 #include "Engine/GameInstance.h"
+#include "GenericPlatform/GenericWindow.h"
 #include "BaseGameInstance.generated.h"
 
+struct FGraphicsSettings
+{
+	FIntPoint Resolution = FIntPoint(1920, 1080);
+	EWindowMode::Type WindowMode = EWindowMode::Windowed;
+	bool bVSync = false;
+	int32 Quality = 3;        // 0 Low .. 4 Cinematic, -1 = custom/mixed
+	float FrameLimit = 0.f;   // 0 = unlimited
+	float Brightness = 0.5f;  // normalized 0..1
+
+	/** True if applying would change the display mode (the only changes that need the revert countdown). */
+	bool IsDisplayDifferent(const FGraphicsSettings& O) const
+	{
+		return Resolution != O.Resolution || WindowMode != O.WindowMode;
+	}
+
+	/** this = staged values, O = what's currently applied. Quality -1 (custom) never counts as a change. */
+	bool HasChangesFrom(const FGraphicsSettings& O) const
+	{
+		return IsDisplayDifferent(O)
+			|| bVSync != O.bVSync
+			|| (Quality >= 0 && Quality != O.Quality)
+			|| !FMath::IsNearlyEqual(FrameLimit, O.FrameLimit, 0.5f)
+			|| !FMath::IsNearlyEqual(Brightness, O.Brightness, 0.005f);
+	}
+};
 /**
  * 
  */
+
 UCLASS()
 class AM_2610_API UBaseGameInstance : public UGameInstance
 {
@@ -42,6 +69,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Settings|Audio") float GetSFXVolume() const { return SFXVolume; }
 	UFUNCTION(BlueprintPure, Category = "Settings|Audio") float GetDialogueVolume() const { return DialogueVolume; }
 	void SaveSettings();
+	FGraphicsSettings GetGraphicsSettings() const;
+	/** Applies everything but writes nothing to disk. */
+	void ApplyGraphics(const FGraphicsSettings& S);
+	/** Persists the currently applied graphics settings (ini + brightness save slot). */
+	void CommitGraphics();
+
+	UFUNCTION(BlueprintCallable, Category = "Settings|Video") void SetBrightness(float Value);
+	UFUNCTION(BlueprintPure, Category = "Settings|Video") float GetBrightness() const { return Brightness; }
 protected:
 	// Opens GameLevels[LevelIndex] and updates CurrentLevel if the index is valid;
 	// logs a warning and does nothing otherwise
@@ -74,5 +109,6 @@ protected:
 	float MusicVolume = 1.f;
 	float SFXVolume = 1.f;
 	float DialogueVolume = 1.f;
+	float Brightness = 0.5f;
 	
 };
