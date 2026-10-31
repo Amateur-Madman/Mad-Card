@@ -348,6 +348,24 @@ void ABasePlayer::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	}
 }
 
+void ABasePlayer::SetHUDHidden(bool bShouldHide)
+{
+	if (!HUDObject || bShouldHide == bHUDHidden)
+	{
+		return;
+	}
+
+	if (bShouldHide)
+	{
+		HUDSavedVisibility = HUDObject->GetVisibility();
+		HUDObject->SetVisibility(ESlateVisibility::Collapsed);
+	}
+	else
+	{
+		HUDObject->SetVisibility(HUDSavedVisibility);
+	}
+	bHUDHidden = bShouldHide;
+}
 
 void ABasePlayer::HandleHurt(float Percent)
 {

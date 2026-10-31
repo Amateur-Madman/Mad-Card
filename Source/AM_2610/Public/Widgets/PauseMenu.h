@@ -39,6 +39,8 @@ protected:
 
 	UPROPERTY(Transient)
 	class USettingsMenu* SettingsMenuInstance = nullptr;
+
+
 private:
 	UFUNCTION() void HandleResumeClicked();
 	UFUNCTION() void HandleSettingsClicked();

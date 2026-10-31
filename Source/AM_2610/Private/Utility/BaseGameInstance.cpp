@@ -6,6 +6,7 @@
 #include "Sound/SoundMix.h"
 #include "Sound/SoundClass.h"
 #include "Utility/SettingsSaveGame.h"
+#include "GameFramework/GameUserSettings.h"
 #include "../AM_2610.h"
 
 
@@ -101,6 +102,7 @@ void UBaseGameInstance::SaveSettings()
 	Save->MusicVolume = MusicVolume;
 	Save->SFXVolume = SFXVolume;
 	Save->DialogueVolume = DialogueVolume;
+	Save->Brightness = Brightness;
 	UGameplayStatics::SaveGameToSlot(Save, SettingsSlot, 0);
 }
 
@@ -112,5 +114,55 @@ void UBaseGameInstance::LoadSettings()
 		MasterVolume = Save->MasterVolume;
 		MusicVolume = Save->MusicVolume;
 		SFXVolume = Save->SFXVolume;
+		DialogueVolume = Save->DialogueVolume; 
+		Brightness = Save->Brightness;
 	}
+}
+void UBaseGameInstance::SetBrightness(float Value)
+{
+	Brightness = FMath::Clamp(Value, 0.f, 1.f);
+	USettingsSaveGame::ApplyBrightness(Brightness);
+}
+
+FGraphicsSettings UBaseGameInstance::GetGraphicsSettings() const
+{
+	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
+
+	FGraphicsSettings S;
+	S.Resolution = GUS->GetScreenResolution();
+	S.WindowMode = GUS->GetFullscreenMode();
+	S.bVSync = GUS->IsVSyncEnabled();
+	S.Quality = GUS->GetOverallScalabilityLevel(); // -1 if the groups are mixed
+	S.FrameLimit = GUS->GetFrameRateLimit();
+	S.Brightness = Brightness;
+	return S;
+}
+
+void UBaseGameInstance::ApplyGraphics(const FGraphicsSettings& S)
+{
+	UGameUserSettings* GUS = UGameUserSettings::GetGameUserSettings();
+	const int32 CurrentQuality = GUS->GetOverallScalabilityLevel();
+
+	GUS->SetScreenResolution(S.Resolution);
+	GUS->SetFullscreenMode(S.WindowMode);
+	GUS->SetVSyncEnabled(S.bVSync);
+	GUS->SetFrameRateLimit(S.FrameLimit);
+
+	// -1 (custom/mixed) can't be set through the overall level, so skip it.
+	if (S.Quality >= 0 && S.Quality != CurrentQuality)
+	{
+		GUS->SetOverallScalabilityLevel(S.Quality);
+	}
+
+	// Split apply (instead of ApplySettings) so nothing is written to the ini until CommitGraphics.
+	GUS->ApplyNonResolutionSettings();
+	GUS->ApplyResolutionSettings(false);
+
+	SetBrightness(S.Brightness);
+}
+
+void UBaseGameInstance::CommitGraphics()
+{
+	UGameUserSettings::GetGameUserSettings()->SaveSettings();
+	SaveSettings(); // brightness (and audio) slot
 }
