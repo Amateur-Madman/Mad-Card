@@ -3,7 +3,6 @@
 
 #include "Actors/WrittingBoard.h"
 #include "Both/SentenceWordUnderlined.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 
 // Sets default values
@@ -12,12 +11,11 @@ AWrittingBoard::AWrittingBoard()
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = false;
 
-	Board = CreateDefaultSubobject<UStaticMeshComponent>("Board");
-	if (Board) SetRootComponent(Board);
-
 	CanvasComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("3DCanvasComponent"));
 	CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
-	CanvasComponent->SetupAttachment(RootComponent);
+	SetRootComponent(CanvasComponent);
+	CanvasComponent->SetDrawSize(FVector2D(1920.0f, 1080.0f));
+	CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
 }
 
 // Called when the game starts or when spawned
@@ -25,12 +23,11 @@ void AWrittingBoard::BeginPlay()
 {
 	Super::BeginPlay();
 
-	MatchCanvasSize();
-
 	if (CanvasComponent)
 	{
 		CanvasComponent->SetWidgetClass(SentenceWordUnderlinedClass);
 		CanvasComponent->InitWidget();
+
 		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
 
 		if (BaseWidget)
@@ -39,26 +36,8 @@ void AWrittingBoard::BeginPlay()
 			if (MainTextWidget)
 			{
 				MainTextWidget->SetupAccordingToDiff();
+				MainTextWidget->ForceLayoutPrepass();
 			}
 		}
 	}
-}
-
-void AWrittingBoard::MatchCanvasSize()
-{
-    if (!Board || !CanvasComponent) return;
-
-    UStaticMesh* MeshAsset = Board->GetStaticMesh();
-    if (!MeshAsset) return;
-
-    FBox LocalBounds = MeshAsset->GetBoundingBox();
-    FVector MeshLocalSize = LocalBounds.GetSize();
-
-    FVector ActorScale = Board->GetComponentScale();
-    FVector MeshWorldSize = MeshLocalSize * ActorScale;
-
-    float TargetWidth = MeshWorldSize.Y;
-    float TargetHeight = MeshWorldSize.Z;
-
-	CanvasComponent->SetDrawSize(FVector2D(TargetWidth, TargetHeight));
 }

@@ -17,7 +17,7 @@ void UWordCharUnderlined::InitializeWord(FString NewWord)
 
     for (int32 i = 0; i < CharArray.Num() - 1; i++)
     {
-        UCharUnderlined* CharWidget = CreateWidget<UCharUnderlined>(GetWorld(), CharUnderlinedClass);
+        UCharUnderlined* CharWidget = CreateWidget<UCharUnderlined>(this, CharUnderlinedClass);
         if (CharWidget)
         {
             //UTextBlock* LetterMeshText = Cast<UTextBlock>(CharWidget->GetWidgetFromName(TEXT("Letter")));

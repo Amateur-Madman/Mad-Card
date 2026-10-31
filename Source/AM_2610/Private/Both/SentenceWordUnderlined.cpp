@@ -43,7 +43,7 @@ void USentenceWordUnderlined::Setup(FString& bWordOrPhrase)
 
     for (int32 WordIndex = 0; WordIndex < WordArray.Num(); WordIndex++)
     {
-        UWordCharUnderlined* WordWidget = CreateWidget<UWordCharUnderlined>(GetWorld(), WordCharUnderlinedClass);
+        UWordCharUnderlined* WordWidget = CreateWidget<UWordCharUnderlined>(this, WordCharUnderlinedClass);
         if (WordWidget)
         {
             FString CurrentWord = WordArray[WordIndex];
@@ -57,4 +57,6 @@ void USentenceWordUnderlined::Setup(FString& bWordOrPhrase)
             WordOrPhrase->AddChildToWrapBox(SpacerWidget);
         }
     }
+
+    this->ForceLayoutPrepass();
 }
