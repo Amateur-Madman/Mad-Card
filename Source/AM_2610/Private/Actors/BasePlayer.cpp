@@ -63,7 +63,7 @@ ABasePlayer::ABasePlayer()
 	InteractionSphere->SetCanEverAffectNavigation(false);
 
 	// Set the soft path in code (still no hardcoded FClassFinder / synchronous load)
-	HUDClass = TSoftClassPtr<UPlayerHUD>(FSoftObjectPath(TEXT("/Game/Both/WBP_PlayerHUD_New.WBP_PlayerHUD_C")));
+	HUDClass = TSoftClassPtr<UPlayerHUD>(FSoftObjectPath(TEXT("/Game/UI/HUD/WBP_PlayerHUD.WBP_PlayerHUD_C")));
 
 	CardHand = CreateDefaultSubobject<UCardHandComponent>(TEXT("CardHand"));
 	PlayerAudio = CreateDefaultSubobject<UPlayerAudioComponent>(TEXT("PlayerAudio"));
