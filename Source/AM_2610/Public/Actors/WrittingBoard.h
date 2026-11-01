@@ -15,13 +15,16 @@ public:
 	// Sets default values for this actor's properties
 	AWrittingBoard();
 
+protected:
+	// Called when the game starts or when spawned
+	virtual void BeginPlay() override;
+
+	UPROPERTY(VisibleAnywhere, Category = "Components")
+	USceneComponent* RootSceneComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Components")
 	class UWidgetComponent* CanvasComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SentenceWordUnderlinedClass;
-
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
 };

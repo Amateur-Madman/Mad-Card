@@ -11,10 +11,14 @@ AWrittingBoard::AWrittingBoard()
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = false;
 
+	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
+	SetRootComponent(RootSceneComponent);
+
 	CanvasComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("3DCanvasComponent"));
 	CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
-	SetRootComponent(CanvasComponent);
+	CanvasComponent->SetupAttachment(RootComponent);
 	CanvasComponent->SetDrawSize(FVector2D(1920.0f, 1080.0f));
+	//CanvasComponent->SetRelativeRotation(FRotator(180.0f, 0.0f, 0.0f));
 	//CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
 }
 
