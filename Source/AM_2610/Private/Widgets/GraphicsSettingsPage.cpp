@@ -9,6 +9,9 @@
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Math/UnrealMathUtility.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -42,12 +45,14 @@ void UGraphicsSettingsPage::NativeConstruct()
 	PopulateFrameLimits();
 	LoadFromSettings();
 	HideConfirmPanel();
+	StartPreviewCapture();	
 }
 
 void UGraphicsSettingsPage::NativeDestruct()
 {
 	// If the page goes away mid-countdown, treat it as "not confirmed" and roll back.
 	CancelPendingChanges();
+	StopPreviewCapture();
 	Super::NativeDestruct();
 }
 
@@ -63,6 +68,14 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 		CurrentPreviewSize = FMath::Vector2DInterpTo(CurrentPreviewSize, TargetPreviewSize, InDeltaTime, PreviewInterpSpeed);
 		PreviewSizeBox->SetWidthOverride(static_cast<float>(CurrentPreviewSize.X));
 		PreviewSizeBox->SetHeightOverride(static_cast<float>(CurrentPreviewSize.Y));
+	}
+
+	if (bLivePreview)
+	{
+		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
+		{
+			Capture->CaptureScene();
+		}
 	}
 
 	if (bAwaitingConfirm)
@@ -83,6 +96,7 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 			}
 		}
 	}
+
 }
 
 void UGraphicsSettingsPage::CancelPendingChanges()
@@ -347,6 +361,46 @@ void UGraphicsSettingsPage::UpdatePreviewTarget(bool bSnap)
 	{
 		CurrentPreviewSize = TargetPreviewSize;
 	}
+}
+
+void UGraphicsSettingsPage::StartPreviewCapture()
+{
+	UWorld* World = GetWorld();
+	if (!World || !PreviewStageClass)
+	{
+		return;
+	}
+
+	AActor* Stage = UGameplayStatics::GetActorOfClass(World, PreviewStageClass);
+	if (!Stage)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Stage = World->SpawnActor<AActor>(PreviewStageClass, PreviewStageSpawnLocation, FRotator::ZeroRotator, Params);
+		SpawnedStage = Stage;
+	}
+
+	if (Stage)
+	{
+		PreviewCapture = Stage->FindComponentByClass<USceneCaptureComponent2D>();
+		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
+		{
+			Capture->bCaptureEveryFrame = false;
+			Capture->bCaptureOnMovement = false;
+			Capture->CaptureScene(); // one shot so the texture isn't black on open
+		}
+	}
+}
+
+void UGraphicsSettingsPage::StopPreviewCapture()
+{
+	PreviewCapture.Reset();
+
+	if (AActor* Stage = SpawnedStage.Get())
+	{
+		Stage->Destroy();
+	}
+	SpawnedStage.Reset();
 }
 
 void UGraphicsSettingsPage::UpdateLabels()

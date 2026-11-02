@@ -13,6 +13,7 @@ class UButtonWithText;
 class UTextBlock;
 class USizeBox;
 class UWidget;
+class USceneCaptureComponent2D;
 
 /**
  * Graphics page for the settings menu (WidgetSwitcher page 2).
@@ -37,6 +38,8 @@ public:
 
 	/** Rolls back to the pre-Apply settings if a confirmation is pending (no-op otherwise). */
 	void CancelPendingChanges();
+
+
 
 protected:
 	virtual void NativeConstruct() override;
@@ -73,6 +76,18 @@ protected:
 	/** Preview scale at the lowest listed resolution (1.0 at the highest). Makes same-aspect changes visible. */
 	UPROPERTY(EditDefaultsOnly, Category = "Preview", meta = (ClampMin = "0.2", ClampMax = "1.0"))
 	float MinPreviewScale = 0.55f;
+
+	/** Blueprint class of the monitor preview stage (BP_PreviewStage). Set in WBP_GraphicsSettingsPage class defaults. */
+	UPROPERTY(EditDefaultsOnly, Category = "Preview")
+	TSubclassOf<AActor> PreviewStageClass;
+
+	/** Where to spawn the stage if the current level doesn't already have one. Keep it far from gameplay. */
+	UPROPERTY(EditDefaultsOnly, Category = "Preview")
+	FVector PreviewStageSpawnLocation = FVector(0.0, 0.0, -50000.0);
+
+	/** Re-capture every tick while the page is open. Leave off if the corridor is static (one capture is enough). */
+	UPROPERTY(EditDefaultsOnly, Category = "Preview")
+	bool bLivePreview = false;
 
 	/** How fast the preview animates toward its new size. */
 	UPROPERTY(EditDefaultsOnly, Category = "Preview")
@@ -137,6 +152,11 @@ private:
 	// Preview animation
 	FVector2D CurrentPreviewSize = FVector2D::ZeroVector;
 	FVector2D TargetPreviewSize = FVector2D::ZeroVector;
+	void StartPreviewCapture();
+	void StopPreviewCapture();
+
+	TWeakObjectPtr<USceneCaptureComponent2D> PreviewCapture;
+	TWeakObjectPtr<AActor> SpawnedStage
 
 	// Countdown
 	bool bAwaitingConfirm = false;
