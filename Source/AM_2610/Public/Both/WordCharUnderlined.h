@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "CharUnderlined.h"
 #include "WordCharUnderlined.generated.h"
 
 /**
@@ -16,11 +17,18 @@ class AM_2610_API UWordCharUnderlined : public UUserWidget
 	
 public:
     UFUNCTION(BlueprintCallable, Category = Default)
-    void InitializeWord(FString NewWord);
+    void InitializeWord(FString& NewWord);
 
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     class UHorizontalBox* Word;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
     TSubclassOf<UUserWidget> CharUnderlinedClass;
+
+    TArray<struct FMadLetter> LetterDatas;
+
+private:
+    const TArray<TCHAR> Punctuation = {TEXT('\''), TEXT('-'), TEXT('?'), TEXT('!'), TEXT('.')};
+
+    bool CheckIfNotLetter(class UCharUnderlined* bCharWidget, TCHAR& bLetter);
 };
