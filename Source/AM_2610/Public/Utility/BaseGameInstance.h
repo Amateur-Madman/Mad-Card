@@ -33,7 +33,7 @@ struct FGraphicsSettings
 	}
 };
 /**
- * 
+ *
  */
 
 UCLASS()
@@ -68,7 +68,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Settings|Audio") float GetMusicVolume() const { return MusicVolume; }
 	UFUNCTION(BlueprintPure, Category = "Settings|Audio") float GetSFXVolume() const { return SFXVolume; }
 	UFUNCTION(BlueprintPure, Category = "Settings|Audio") float GetDialogueVolume() const { return DialogueVolume; }
-	void SaveSettings();
+	UFUNCTION(BlueprintCallable, Category = "Settings") void SaveSettings();
 	FGraphicsSettings GetGraphicsSettings() const;
 	/** Applies everything but writes nothing to disk. */
 	void ApplyGraphics(const FGraphicsSettings& S);
@@ -77,6 +77,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Settings|Video") void SetBrightness(float Value);
 	UFUNCTION(BlueprintPure, Category = "Settings|Video") float GetBrightness() const { return Brightness; }
+
+	// Check this in the main menu startup flow, before showing the normal menu.
+	UFUNCTION(BlueprintPure, Category = "Settings|Video")
+	bool NeedsBrightnessCalibration() const { return !bBrightnessCalibrated; }
+
+	// Save the current brightness and completion flag. Only continue when this returns true.
+	UFUNCTION(BlueprintCallable, Category = "Settings|Video")
+	bool CompleteBrightnessCalibration();
 protected:
 	// Opens GameLevels[LevelIndex] and updates CurrentLevel if the index is valid;
 	// logs a warning and does nothing otherwise
@@ -96,6 +104,7 @@ protected:
 	int32 CurrentLevel = 0;
 
 	void LoadSettings();
+	bool TrySaveSettings();
 	void ApplyAudioSettings(UWorld* World);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Settings|Audio") class USoundMix* SettingsSoundMix;
@@ -110,5 +119,6 @@ protected:
 	float SFXVolume = 1.f;
 	float DialogueVolume = 1.f;
 	float Brightness = 0.5f;
-	
+	bool bBrightnessCalibrated = false;
+
 };

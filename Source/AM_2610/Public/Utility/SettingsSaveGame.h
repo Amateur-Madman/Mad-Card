@@ -17,7 +17,12 @@ public:
 	UPROPERTY() float MusicVolume = 1.f;
 	UPROPERTY() float SFXVolume = 1.f;
 	UPROPERTY() float DialogueVolume = 1.f;
-	UPROPERTY() float Brightness = 0.5f; // normalized 0..1, 0.5 = engine default gamma (2.2)
+	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "Settings|Video")
+	float Brightness = 0.5f; // normalized 0..1, 0.5 = engine default gamma (2.2)
+
+	// Remains false for new and older settings files until the player confirms calibration.
+	UPROPERTY(SaveGame, BlueprintReadWrite, Category = "Settings|Video")
+	bool bBrightnessCalibrated = false;
 
 	static constexpr float MinGamma = 1.6f;
 	static constexpr float MaxGamma = 2.8f;

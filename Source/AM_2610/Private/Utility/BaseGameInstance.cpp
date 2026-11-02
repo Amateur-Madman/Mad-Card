@@ -1,12 +1,14 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Utility/BaseGameInstance.h"
+#include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Sound/SoundMix.h"
 #include "Sound/SoundClass.h"
 #include "Utility/SettingsSaveGame.h"
 #include "GameFramework/GameUserSettings.h"
+#include "TimerManager.h"
 #include "../AM_2610.h"
 
 
@@ -52,6 +54,7 @@ void UBaseGameInstance::Init()
 {
 	Super::Init();
 	LoadSettings();
+	SetBrightness(Brightness);
 }
 
 void UBaseGameInstance::OnWorldChanged(UWorld* OldWorld, UWorld* NewWorld)
@@ -95,15 +98,41 @@ void UBaseGameInstance::ApplyAudioSettings(UWorld* World)
 }
 void UBaseGameInstance::SaveSettings()
 {
+	TrySaveSettings();
+}
+
+bool UBaseGameInstance::TrySaveSettings()
+{
 	UE_LOG(LogTemp, Warning, TEXT("SaveSettings %.2f/%.2f/%.2f"), MasterVolume, MusicVolume, SFXVolume);
 	USettingsSaveGame* Save = Cast<USettingsSaveGame>(UGameplayStatics::CreateSaveGameObject(USettingsSaveGame::StaticClass()));
-	if (!Save) return;
+	if (!Save)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Could not create the settings save object."));
+		return false;
+	}
 	Save->MasterVolume = MasterVolume;
 	Save->MusicVolume = MusicVolume;
 	Save->SFXVolume = SFXVolume;
 	Save->DialogueVolume = DialogueVolume;
 	Save->Brightness = Brightness;
-	UGameplayStatics::SaveGameToSlot(Save, SettingsSlot, 0);
+	Save->bBrightnessCalibrated = bBrightnessCalibrated;
+	if (!UGameplayStatics::SaveGameToSlot(Save, SettingsSlot, 0))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Could not save settings to slot '%s'."), *SettingsSlot);
+		return false;
+	}
+	return true;
+}
+
+bool UBaseGameInstance::CompleteBrightnessCalibration()
+{
+	const bool bWasCalibrated = bBrightnessCalibrated;
+	bBrightnessCalibrated = true;
+	if (TrySaveSettings()) return true;
+
+	// Leave first-launch calibration pending if the disk write fails.
+	bBrightnessCalibrated = bWasCalibrated;
+	return false;
 }
 
 void UBaseGameInstance::LoadSettings()
@@ -114,13 +143,14 @@ void UBaseGameInstance::LoadSettings()
 		MasterVolume = Save->MasterVolume;
 		MusicVolume = Save->MusicVolume;
 		SFXVolume = Save->SFXVolume;
-		DialogueVolume = Save->DialogueVolume; 
-		Brightness = Save->Brightness;
+		DialogueVolume = Save->DialogueVolume;
+		bBrightnessCalibrated = Save->bBrightnessCalibrated;
+		Brightness = bBrightnessCalibrated ? Save->Brightness : 0.5f;
 	}
 }
 void UBaseGameInstance::SetBrightness(float Value)
 {
-	Brightness = FMath::Clamp(Value, 0.f, 1.f);
+	Brightness = FMath::IsFinite(Value) ? FMath::Clamp(Value, 0.f, 1.f) : 0.5f;
 	USettingsSaveGame::ApplyBrightness(Brightness);
 }
 
