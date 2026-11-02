@@ -15,7 +15,7 @@ void UWordCharUnderlined::InitializeWord(FString& NewWord)
 
 	TArray<TCHAR> CharArray = NewWord.GetCharArray();
 
-    for (int32 i = 0; i < CharArray.Num() - 1; i++)
+    for (int32 i = 0; i < CharArray.Num()-1; i++)
     {
         UCharUnderlined* CharWidget = CreateWidget<UCharUnderlined>(this, CharUnderlinedClass);
 

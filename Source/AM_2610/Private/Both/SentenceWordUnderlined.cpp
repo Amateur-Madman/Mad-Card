@@ -7,6 +7,7 @@
 #include "Components/WrapBox.h"
 #include "Enviornment/MazeSaveSubsystem.h"
 
+// Randomly choose from an array of strings based on the current difficulty level and set up the widget accordingly
 void USentenceWordUnderlined::SetupAccordingToDiff()
 {
     int32 RandomIndex;
@@ -38,14 +39,15 @@ void USentenceWordUnderlined::Setup(const FString& bWordOrPhrase)
 
     WordOrPhrase->ClearChildren();
 
+	// Split the input string into words and create a UWordCharUnderlined widget for each word
     TArray<FString> WordArray;
     bWordOrPhrase.ParseIntoArray(WordArray, TEXT(" "), true);
 
-    for (int32 i = 0; i < WordArray.Num() - 1; i++)
+    for (int32 i = 0; i < WordArray.Num(); i++)
     {
-        //Update letter index throughout words
         UWordCharUnderlined* WordWidget = CreateWidget<UWordCharUnderlined>(this, WordCharUnderlinedClass);
 
+		// Add the word widget to the wrap box and store its letter data
         if (WordWidget)
         {
             WordWidget->InitializeWord(WordArray[i]);
@@ -65,23 +67,17 @@ void USentenceWordUnderlined::Setup(const FString& bWordOrPhrase)
 
 void USentenceWordUnderlined::AddToLetters(TArray<struct FMadLetter> bMadLetters)
 {
-    for (int32 i = 0; i < bMadLetters.Num() - 1; i++)
+    for (int32 i = 0; i < bMadLetters.Num(); i++)
     {
         AllLetters.Add(bMadLetters[i]);
     }
 }
 
-FReply USentenceWordUnderlined::NativeOnKeyChar(const FGeometry& InGeometry, const FCharacterEvent& InCharEvent)
-{
-    CheckInput(InCharEvent.GetCharacter());
-    return FReply::Handled();
-}
-
 bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
 {
-    for (int32 i = 0; i < AllLetters.Num() - 1; i++)
+    for (int32 i = 0; i < AllLetters.Num(); i++)
     {
-        if (LetterTyped == AllLetters[i].Char)
+        if (LetterTyped == FChar::ToLower(AllLetters[i].Char) || LetterTyped == FChar::ToUpper(AllLetters[i].Char))
         {
             AllLetters[i].GetParent()->FillLetter();
         }

@@ -15,10 +15,10 @@ public:
 	FBoardInputInterceptor(class AWrittingBoard* InBoard) : TargetBoard(InBoard) {}
 	virtual ~FBoardInputInterceptor() {}
 
-	//virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp, TSharedRef<ICursor> Cursor) override {}
+	virtual void Tick(const float DeltaTime, FSlateApplication& SlateApp, TSharedRef<ICursor> Cursor) override {}
 
 	// This function intercepts text and character strokes globally
-	virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FCharacterEvent& InCharacterEvent);
+	virtual bool HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override;
 };
 
 UCLASS()
@@ -29,9 +29,12 @@ class AM_2610_API AWrittingBoard : public AActor
 public:	
 	AWrittingBoard();
 
+	void SendKeyboardInput(const TCHAR& InKey);
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Components")
 	class UBoxComponent* EditorOutline;

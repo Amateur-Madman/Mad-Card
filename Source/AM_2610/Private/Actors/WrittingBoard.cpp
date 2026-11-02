@@ -6,7 +6,6 @@
 #include "Components/WidgetComponent.h"
 #include "Components/BoxComponent.h"
 #include "Actors/BasePlayerController.h"
-#include "Framework/Application/SlateApplication.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 
@@ -22,7 +21,7 @@ AWrittingBoard::AWrittingBoard()
 		CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
 		SetRootComponent(CanvasComponent);
 		CanvasComponent->SetDrawSize(FVector2D(DrawX, DrawY));
-		CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
+		CanvasComponent->SetRelativeScale3D(FVector(0.4f, 0.4f, 0.4f));
 	}
 
 	float HalfWidth = DrawX / 2.0f;
@@ -36,6 +35,22 @@ AWrittingBoard::AWrittingBoard()
 		EditorOutline->SetHiddenInGame(true);
 		EditorOutline->SetLineThickness(4.0f);
 		EditorOutline->ShapeColor = FColor::Yellow; 
+	}
+}
+
+void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
+{
+	if (CanvasComponent)
+	{
+		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
+		if (BaseWidget)
+		{
+			USentenceWordUnderlined* MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
+			if (MainTextWidget)
+			{
+				MainTextWidget->CheckInput(InKey);
+			}
+		}
 	}
 }
 
@@ -59,12 +74,44 @@ void AWrittingBoard::BeginPlay()
 				MainTextWidget->SetupAccordingToDiff();
 			}
 		}
+
+		if (FSlateApplication::IsInitialized())
+		{
+			InputProcessor = MakeShareable(new FBoardInputInterceptor(this));
+			FSlateApplication::Get().RegisterInputPreProcessor(InputProcessor);
+		}
 	}
-
-
 }
 
-bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FCharacterEvent& InCharacterEvent)
+void AWrittingBoard::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// Disposes layout cleanly when the scene closes out or changes
+	if (FSlateApplication::IsInitialized() && InputProcessor.IsValid())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(InputProcessor);
+		InputProcessor.Reset();
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent)
+{
+	if(TargetBoard)
+	{
+		FKey PressedKey = InKeyEvent.GetKey();
+		FString KeyName = PressedKey.ToString();
+		if (KeyName.Len() == 1)
+		{
+			TCHAR Letter = KeyName[0];
+			if (PressedKey == EKeys::W || PressedKey == EKeys::A || PressedKey == EKeys::S || PressedKey == EKeys::D)
+			{
+				TargetBoard->SendKeyboardInput(Letter);
+				return false;
+			}
+			TargetBoard->SendKeyboardInput(Letter);
+		}
+		//return true;
+	}
 	return false;
 }

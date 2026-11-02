@@ -38,7 +38,4 @@ private:
 	void AddToLetters(TArray<struct FMadLetter> bMadLetters);
 
 	TArray<struct FMadLetter> AllLetters;
-
-protected:
-	FReply NativeOnKeyChar(const FGeometry& InGeometry, const FCharacterEvent& InCharEvent) override;
 };
