@@ -16,9 +16,11 @@ struct FMadLetter
 {
 	GENERATED_BODY()
 
-	//Placement in word or phrase
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
-	int32 Index;
+	class UCharUnderlined* ParentClass = nullptr;
+
+	class UCharUnderlined* GetParent() { return ParentClass; }
+
+	TCHAR Char;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TArray<FSlateFontInfo> FontOptions;
@@ -36,10 +38,11 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	class UTextBlock* Underscore;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Letter Setup")
-	FMadLetter LetterData;
-
 public:
-	void SetLetter(FString bLetter);
-	void InitializeSpace(int32 bIndex);
+	void FillLetter();
+	void InitializeSpace(TCHAR& bLetter);
+	void NotALetter(TCHAR& bLetter);
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Letter Setup")
+	FMadLetter LetterData;
 };

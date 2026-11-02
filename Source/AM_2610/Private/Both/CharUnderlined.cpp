@@ -4,12 +4,14 @@
 #include "Both/CharUnderlined.h"
 #include "Components/TextBlock.h"
 
-void UCharUnderlined::SetLetter(FString bLetter)
+void UCharUnderlined::FillLetter()
 {
-	Letter->SetText(FText::FromString(bLetter));
+	FString CharString = FString(1, &LetterData.Char);
+	Letter->SetText(FText::FromString(CharString));
 }
 
-void UCharUnderlined::InitializeSpace(int32 bIndex)
+//Auto fill spaces with a possible random font
+void UCharUnderlined::InitializeSpace(TCHAR& bLetter)
 {
 	int32 RandomIndex = FMath::RandRange(0, LetterData.FontOptions.Num() - 1);
 	if (LetterData.FontOptions.IsValidIndex(RandomIndex))
@@ -17,6 +19,13 @@ void UCharUnderlined::InitializeSpace(int32 bIndex)
 		FSlateFontInfo RandFont = LetterData.FontOptions[RandomIndex];
 		Letter->SetFont(RandFont);
 	}
+	LetterData.ParentClass = this;
+	LetterData.Char = bLetter;
+}
 
-	LetterData.Index = bIndex;
+//Auto fill in punctuation and remove the underscore
+void UCharUnderlined::NotALetter(TCHAR& bLetter)
+{
+	Letter->SetText(FText::FromString(FString(1, &bLetter)));
+	Underscore->SetText(FText::FromString(""));
 }

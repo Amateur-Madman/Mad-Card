@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "CharUnderlined.h"
 #include "SentenceWordUnderlined.generated.h"
 
 /**
@@ -17,9 +18,9 @@ class AM_2610_API USentenceWordUnderlined : public UUserWidget
 public:
 	void SetupAccordingToDiff();
 
-	TArray<FString> EasyArray = { TEXT("Suffer"), TEXT("You Lose"), TEXT("The Mad-Man"), TEXT("Gotcha") };
+	const TArray<FString> EasyArray = { TEXT("Suffer!"), TEXT("You Lose!"), TEXT("The Mad-Man!"), TEXT("Gotcha!") };
 
-	TArray<FString> HardArray = { TEXT("You'll never escape the maze"), TEXT("I was crazy once"), TEXT("You thought I'd let you go") };
+	const TArray<FString> HardArray = { TEXT("You'll never escape the maze!"), TEXT("I was crazy once."), TEXT("You thought I'd let you go?") };
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	class UWrapBox* WordOrPhrase;
@@ -30,6 +31,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SpaceWidgetClass;
 
+	bool CheckInput(TCHAR LetterTyped);
+
 private:
-	void Setup(FString& bWordOrPhrase);
+	void Setup(const FString& bWordOrPhrase);
+	void AddToLetters(TArray<struct FMadLetter> bMadLetters);
+
+	TArray<struct FMadLetter> AllLetters;
+
+protected:
+	FReply NativeOnKeyChar(const FGeometry& InGeometry, const FCharacterEvent& InCharEvent) override;
 };

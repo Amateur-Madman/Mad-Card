@@ -4,6 +4,11 @@
 #include "Actors/WrittingBoard.h"
 #include "Both/SentenceWordUnderlined.h"
 #include "Components/WidgetComponent.h"
+#include "Components/BoxComponent.h"
+#include "Actors/BasePlayerController.h"
+#include "Framework/Application/SlateApplication.h"
+#include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -11,15 +16,27 @@ AWrittingBoard::AWrittingBoard()
  	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = false;
 
-	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
-	SetRootComponent(RootSceneComponent);
-
 	CanvasComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("3DCanvasComponent"));
-	CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
-	CanvasComponent->SetupAttachment(RootComponent);
-	CanvasComponent->SetDrawSize(FVector2D(1920.0f, 1080.0f));
-	//CanvasComponent->SetRelativeRotation(FRotator(180.0f, 0.0f, 0.0f));
-	//CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
+	if(CanvasComponent)
+	{
+		CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
+		SetRootComponent(CanvasComponent);
+		CanvasComponent->SetDrawSize(FVector2D(DrawX, DrawY));
+		CanvasComponent->SetRelativeScale3D(FVector(0.2f, 0.2f, 0.2f));
+	}
+
+	float HalfWidth = DrawX / 2.0f;
+	float HalfHeight = DrawY / 2.0f;
+
+	EditorOutline = CreateDefaultSubobject<UBoxComponent>(TEXT("EditorOutline"));
+	if (EditorOutline)
+	{
+		EditorOutline->SetupAttachment(RootComponent);
+		EditorOutline->SetBoxExtent(FVector(2.0f, HalfWidth, HalfHeight)); 
+		EditorOutline->SetHiddenInGame(true);
+		EditorOutline->SetLineThickness(4.0f);
+		EditorOutline->ShapeColor = FColor::Yellow; 
+	}
 }
 
 // Called when the game starts or when spawned
@@ -40,8 +57,14 @@ void AWrittingBoard::BeginPlay()
 			if (MainTextWidget)
 			{
 				MainTextWidget->SetupAccordingToDiff();
-				//MainTextWidget->ForceLayoutPrepass();
 			}
 		}
 	}
+
+
+}
+
+bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FCharacterEvent& InCharacterEvent)
+{
+	return false;
 }
