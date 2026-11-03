@@ -17,7 +17,10 @@ ACardPickup::ACardPickup()
 	CardIconDisplay->SetHiddenInGame(false);
 	CardIconDisplay->SetSprite(nullptr);
 	CardIconDisplay->bIsScreenSizeScaled = false;
+
+#if WITH_EDITORONLY_DATA
 	CardIconDisplay->bUseInEditorScaling = false;
+#endif
 	CardIconDisplay->SetRelativeScale3D(FVector(0.1f));
 
 	// Cards are deliberate pickups: the player presses the context button, and the choice
