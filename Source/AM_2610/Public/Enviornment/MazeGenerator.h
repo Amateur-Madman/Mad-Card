@@ -13,6 +13,7 @@ class UBoxComponent;
 class UPrimitiveComponent;
 class APawn;
 class ANavMeshBoundsVolume;
+class AAudioVolume;
 class UMazePuzzleComponent;
 class UNavigationSystemV1;
 class UAudioComponent;
@@ -106,6 +107,11 @@ public:
     // Final navigation volume size after multipliers and padding.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Navigation")
     FVector GeneratedNavBoundsSize = FVector::ZeroVector;
+
+    // Reuses a placed box AudioVolume, fitting it to each accepted maze before steam starts.
+    // Keep reverb settings on the volume. Shares navigation's horizontal/height padding.
+    UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Maze|Audio", meta = (DisplayName = "Maze Reverb Volume"))
+    TObjectPtr<AAudioVolume> MazeReverbVolume = nullptr;
 
     // One safe player-capsule position inside both BP_Start and BP_Start_Next.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Saving")
@@ -915,6 +921,7 @@ private:
     TSubclassOf<APawn> FindEnemyClassForSpawnPoint(UArrowComponent* SpawnPoint) const;
     bool IsEnemyCorridorClass(TSubclassOf<AMazeActors> PieceClass) const;
     bool UpdateMazeNavigationBounds();
+    void UpdateMazeReverbVolume();
     void StepNavigation();
     int32 GenerationRouteRoomCount = 0;
     int32 GenerationHallwaysSinceRoom = 0;

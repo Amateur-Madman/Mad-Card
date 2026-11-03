@@ -9,6 +9,7 @@
 #include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
+#include "Sound/AudioVolume.h"
 #include "Sound/SoundAttenuation.h"
 #include "Components/BoxComponent.h"
 #include "Components/BrushComponent.h"
@@ -1055,6 +1056,90 @@ bool AMazeGenerator::UpdateMazeNavigationBounds()
     Navigation->OnNavigationBoundsUpdated(MazeNavBounds);
 
     return true;
+}
+
+void AMazeGenerator::UpdateMazeReverbVolume()
+{
+    // Seed previews must never move the level's listening region.
+    if (bSeedCollectionRunning || !IsValid(MazeReverbVolume))
+    {
+        return;
+    }
+
+    AAudioVolume* Volume = MazeReverbVolume.Get();
+    UBrushComponent* Brush = Volume->GetBrushComponent();
+
+    if (!IsValid(Brush) || Volume->GetRootComponent() != Brush)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Maze: Maze Reverb Volume needs a placed box AudioVolume with its original brush root."));
+        return;
+    }
+
+    FBox MazeWorldBounds(ForceInit);
+    const auto IncludePiece = [this, &MazeWorldBounds](AMazeActors* Piece)
+        {
+            TArray<FBox> Boxes;
+            if (!GetFootprints(Piece, Boxes))
+            {
+                return false;
+            }
+            for (const FBox& Box : Boxes)
+            {
+                MazeWorldBounds += Box;
+            }
+            return true;
+        };
+
+    if (!IncludePiece(CurrentRoom))
+    {
+        return;
+    }
+    for (AMazeActors* Piece : SpawnedMazeActors)
+    {
+        if (IsValid(Piece) && Piece != CurrentRoom && !IncludePiece(Piece))
+        {
+            return;
+        }
+    }
+    if (IsValid(NextRoom) && !IncludePiece(NextRoom))
+    {
+        return;
+    }
+
+    // Always measure the original, unscaled box to avoid growth on later runs.
+    const FBoxSphereBounds LocalBrushBounds = Brush->CalcBounds(FTransform::Identity);
+    const FVector BaseExtent = LocalBrushBounds.BoxExtent;
+    if (!MazeWorldBounds.IsValid || LocalBrushBounds.Origin.ContainsNaN() || BaseExtent.ContainsNaN()
+        || BaseExtent.X <= UE_SMALL_NUMBER || BaseExtent.Y <= UE_SMALL_NUMBER || BaseExtent.Z <= UE_SMALL_NUMBER
+        || !FMath::IsFinite(NavBoundsHorizontalPadding) || !FMath::IsFinite(NavBoundsHeightPadding))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Maze: Cannot fit reverb volume; check its nonzero box brush dimensions and maze padding."));
+        return;
+    }
+
+    const FVector RequiredExtent = MazeWorldBounds.GetExtent() + FVector(
+        FMath::Max(0.0f, NavBoundsHorizontalPadding),
+        FMath::Max(0.0f, NavBoundsHorizontalPadding),
+        FMath::Max(0.0f, NavBoundsHeightPadding));
+    const FVector NewScale(
+        RequiredExtent.X / BaseExtent.X,
+        RequiredExtent.Y / BaseExtent.Y,
+        RequiredExtent.Z / BaseExtent.Z);
+    const FVector NewLocation = MazeWorldBounds.GetCenter() - LocalBrushBounds.Origin * NewScale;
+    if (NewScale.ContainsNaN() || NewLocation.ContainsNaN())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Maze: Cannot fit reverb volume to invalid world bounds."));
+        return;
+    }
+
+    // Refresh the audio volume after the physics brush has moved. Keep the
+    // designer's enabled state, preset, reverb mix, priority, and submix settings.
+    const bool bWasEnabled = Volume->GetEnabled();
+    Volume->SetEnabled(false);
+    Brush->SetMobility(EComponentMobility::Movable);
+    Volume->SetActorTransform(FTransform(FRotator::ZeroRotator, NewLocation, NewScale));
+    Brush->UpdateBounds();
+    Volume->SetEnabled(bWasEnabled);
 }
 
 // Wait for navigation for every enemy type before spawning any enemies.
@@ -3460,6 +3545,9 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
 
     if (bSuccess)
     {
+        // Fit the listening region before the airlock steam and opening event.
+        UpdateMazeReverbVolume();
+
         DoorGenerationReadyRoom = CompletedRoom;
         DoorGenerationReadyDoorTag = CompletedDoorTag;
         bWaitingForDoorGenerationSteam = true;
