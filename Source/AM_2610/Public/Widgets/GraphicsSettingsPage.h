@@ -26,6 +26,10 @@ class USceneCaptureComponent2D;
  *
  * Nothing is applied until Apply is pressed; nothing is written to disk until Keep
  * (or immediately, for changes that can't strand the player).
+ *
+ * The corridor preview is a scene capture (BP_PreviewStage -> RT_Preview -> M_PreviewStage).
+ * It only exists / renders while this page is alive, and only re-renders on demand
+ * (open, tab re-entry, Apply, Revert) unless bLivePreview is on.
  */
 UCLASS()
 class AM_2610_API UGraphicsSettingsPage : public UUserWidget
@@ -39,7 +43,11 @@ public:
 	/** Rolls back to the pre-Apply settings if a confirmation is pending (no-op otherwise). */
 	void CancelPendingChanges();
 
-
+	/**
+	 * Re-renders the preview for a few frames so scalability / lighting changes have time to settle.
+	 * Cheap: it stops by itself. SettingsMenu calls this when the Graphics tab is shown.
+	 */
+	void RequestPreviewRecapture(int32 Frames = 10) { CaptureFramesRemaining = FMath::Max(CaptureFramesRemaining, Frames); }
 
 protected:
 	virtual void NativeConstruct() override;
@@ -85,7 +93,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Preview")
 	FVector PreviewStageSpawnLocation = FVector(0.0, 0.0, -50000.0);
 
-	/** Re-capture every tick while the page is open. Leave off if the corridor is static (one capture is enough). */
+	/**
+	 * Re-capture every tick while the page is open. Leave OFF unless the corridor has animated lights/parts;
+	 * the on-demand recapture (open, Apply, Revert, tab re-entry) is enough for a static scene.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Preview")
 	bool bLivePreview = false;
 
@@ -127,6 +138,10 @@ private:
 	static FString ResolutionToString(const FIntPoint& Res);
 	static FString AspectToString(const FIntPoint& Res);
 
+	// Scene-capture preview (stage is spawned/found on construct, destroyed on destruct)
+	void StartPreviewCapture();
+	void StopPreviewCapture();
+
 	// Revert countdown (driven by NativeTick: world timers freeze while the game is paused)
 	void StartRevertCountdown();
 	void UpdateConfirmText();
@@ -152,11 +167,11 @@ private:
 	// Preview animation
 	FVector2D CurrentPreviewSize = FVector2D::ZeroVector;
 	FVector2D TargetPreviewSize = FVector2D::ZeroVector;
-	void StartPreviewCapture();
-	void StopPreviewCapture();
 
+	// Scene capture
 	TWeakObjectPtr<USceneCaptureComponent2D> PreviewCapture;
-	TWeakObjectPtr<AActor> SpawnedStage
+	TWeakObjectPtr<AActor> SpawnedStage; // only set if this page spawned the stage
+	int32 CaptureFramesRemaining = 0;
 
 	// Countdown
 	bool bAwaitingConfirm = false;

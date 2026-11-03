@@ -19,7 +19,7 @@ void USettingsMenu::NativeConstruct()
 // Tabs are locked while the graphics page is waiting on "keep these settings?"
 void USettingsMenu::HandleInputTabClicked() { if (PageSwitcher && !(GraphicsPage && GraphicsPage->IsAwaitingConfirm())) PageSwitcher->SetActiveWidgetIndex(0); }
 void USettingsMenu::HandleAudioTabClicked() { if (PageSwitcher && !(GraphicsPage && GraphicsPage->IsAwaitingConfirm())) PageSwitcher->SetActiveWidgetIndex(1); }
-void USettingsMenu::HandleGraphicsTabClicked() { if (PageSwitcher) PageSwitcher->SetActiveWidgetIndex(2); }
+void USettingsMenu::HandleGraphicsTabClicked() { if (PageSwitcher) PageSwitcher->SetActiveWidgetIndex(2);if (GraphicsPage) GraphicsPage->RequestPreviewRecapture();}
 
 void USettingsMenu::HandleBackClicked()
 {

@@ -45,7 +45,7 @@ void UGraphicsSettingsPage::NativeConstruct()
 	PopulateFrameLimits();
 	LoadFromSettings();
 	HideConfirmPanel();
-	StartPreviewCapture();	
+	StartPreviewCapture();
 }
 
 void UGraphicsSettingsPage::NativeDestruct()
@@ -60,7 +60,7 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// Slate ticks with real time, so both of these keep running while the game is paused
+	// Slate ticks with real time, so all of this keeps running while the game is paused
 	// (the pause menu opens this page).
 
 	if (PreviewSizeBox)
@@ -70,12 +70,15 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 		PreviewSizeBox->SetHeightOverride(static_cast<float>(CurrentPreviewSize.Y));
 	}
 
-	if (bLivePreview)
+	// Scene capture: only renders for a few frames after a request (open / Apply / Revert / tab re-entry),
+	// or every tick if bLivePreview is on. Otherwise it costs nothing.
+	if (bLivePreview || CaptureFramesRemaining > 0)
 	{
 		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
 		{
 			Capture->CaptureScene();
 		}
+		CaptureFramesRemaining = FMath::Max(0, CaptureFramesRemaining - 1);
 	}
 
 	if (bAwaitingConfirm)
@@ -96,7 +99,6 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 			}
 		}
 	}
-
 }
 
 void UGraphicsSettingsPage::CancelPendingChanges()
@@ -301,6 +303,7 @@ void UGraphicsSettingsPage::HandleApplyClicked()
 	const bool bDisplayChanged = Pending.IsDisplayDifferent(Prev);
 
 	GI->ApplyGraphics(Pending);
+	RequestPreviewRecapture(); // show the newly applied quality in the preview
 
 	if (bDisplayChanged)
 	{
@@ -385,9 +388,12 @@ void UGraphicsSettingsPage::StartPreviewCapture()
 		PreviewCapture = Stage->FindComponentByClass<USceneCaptureComponent2D>();
 		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
 		{
+			// The page drives the capture, so the component never renders on its own.
 			Capture->bCaptureEveryFrame = false;
 			Capture->bCaptureOnMovement = false;
-			Capture->CaptureScene(); // one shot so the texture isn't black on open
+
+			// A few frames (not one) so lighting / scalability have time to settle and the texture isn't black on open.
+			RequestPreviewRecapture();
 		}
 	}
 }
@@ -395,6 +401,7 @@ void UGraphicsSettingsPage::StartPreviewCapture()
 void UGraphicsSettingsPage::StopPreviewCapture()
 {
 	PreviewCapture.Reset();
+	CaptureFramesRemaining = 0;
 
 	if (AActor* Stage = SpawnedStage.Get())
 	{
@@ -489,6 +496,7 @@ void UGraphicsSettingsPage::RestorePreviousSettings()
 	if (UBaseGameInstance* GI = GetGI())
 	{
 		GI->ApplyGraphics(Prev);
+		RequestPreviewRecapture(); // preview back to the restored quality
 	}
 
 	HideConfirmPanel();
