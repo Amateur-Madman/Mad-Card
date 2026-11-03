@@ -25,7 +25,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
     TSubclassOf<UUserWidget> CharUnderlinedClass;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+    TSubclassOf<UUserWidget> SpaceWidgetClass;
+
     TArray<struct FMadLetter> LetterDatas;
+
+    void AddIncorrect(TCHAR& bLetter);
 
 private:
     const TArray<TCHAR> Punctuation = {TEXT('\''), TEXT('-'), TEXT('?'), TEXT('!'), TEXT('.')};

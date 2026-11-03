@@ -31,6 +31,22 @@ void UWordCharUnderlined::InitializeWord(FString& NewWord)
     }
 }
 
+void UWordCharUnderlined::AddIncorrect(TCHAR& bLetter)
+{
+    UCharUnderlined* CharWidget = CreateWidget<UCharUnderlined>(this, CharUnderlinedClass);
+    if (CharWidget)
+    {
+        CharWidget->Incorrect(bLetter);
+        Word->AddChildToHorizontalBox(CharWidget);
+    }
+
+    UUserWidget* SpacerWidget = CreateWidget<UUserWidget>(GetWorld(), SpaceWidgetClass);
+    if (SpacerWidget)
+    {
+        Word->AddChildToHorizontalBox(SpacerWidget);
+    }
+}
+
 //Not having the player guess for punctuation
 bool UWordCharUnderlined::CheckIfNotLetter(UCharUnderlined* bCharWidget, TCHAR& bLetter)
 {

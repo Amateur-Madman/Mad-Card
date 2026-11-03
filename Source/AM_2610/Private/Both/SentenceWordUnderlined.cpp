@@ -6,6 +6,7 @@
 #include "Both/WordCharUnderlined.h"
 #include "Components/WrapBox.h"
 #include "Enviornment/MazeSaveSubsystem.h"
+#include "Both/GuessBox.h"
 
 // Randomly choose from an array of strings based on the current difficulty level and set up the widget accordingly
 void USentenceWordUnderlined::SetupAccordingToDiff()
@@ -80,7 +81,10 @@ bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
         if (LetterTyped == FChar::ToLower(AllLetters[i].Char) || LetterTyped == FChar::ToUpper(AllLetters[i].Char))
         {
             AllLetters[i].GetParent()->FillLetter();
+			return true;
         }
     }
+
+	WrongGuessBox->GuessBox->AddIncorrect(LetterTyped);
     return false;
 }

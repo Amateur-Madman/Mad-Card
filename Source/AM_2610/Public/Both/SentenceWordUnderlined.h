@@ -38,4 +38,8 @@ private:
 	void AddToLetters(TArray<struct FMadLetter> bMadLetters);
 
 	TArray<struct FMadLetter> AllLetters;
+
+protected:
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+	class UGuessBox* WrongGuessBox;
 };

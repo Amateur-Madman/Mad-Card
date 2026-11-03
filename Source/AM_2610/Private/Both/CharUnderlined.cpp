@@ -29,3 +29,9 @@ void UCharUnderlined::NotALetter(TCHAR& bLetter)
 	Letter->SetText(FText::FromString(FString(1, &bLetter)));
 	Underscore->SetText(FText::FromString(""));
 }
+
+void UCharUnderlined::Incorrect(TCHAR& bLetter)
+{
+	NotALetter(bLetter);
+	Letter->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+}
