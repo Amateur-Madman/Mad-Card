@@ -6,6 +6,10 @@
 #include "Enviornment/MazePuzzleComponent.h"
 #include "Enviornment/MazeSaveSubsystem.h"
 #include "Components/ArrowComponent.h"
+#include "Components/AudioComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Sound/SoundAttenuation.h"
 #include "Components/BoxComponent.h"
 #include "Components/BrushComponent.h"
 #include "Components/SceneComponent.h"
@@ -3133,6 +3137,269 @@ void AMazeGenerator::StepCaps()
     GenerationTarget.Reset();
 }
 
+USoundAttenuation* AMazeGenerator::GetDoorGenerationAttenuation()
+{
+    if (!IsValid(DefaultDoorGenerationAttenuation))
+    {
+        DefaultDoorGenerationAttenuation = NewObject<USoundAttenuation>(this);
+        FSoundAttenuationSettings& Settings = DefaultDoorGenerationAttenuation->Attenuation;
+        Settings.bAttenuate = true;
+        Settings.bSpatialize = true;
+        Settings.AttenuationShape = EAttenuationShape::Sphere;
+        Settings.AttenuationShapeExtents = FVector(200.0f, 0.0f, 0.0f);
+        Settings.FalloffDistance = 1800.0f;
+    }
+    return DefaultDoorGenerationAttenuation.Get();
+}
+
+void AMazeGenerator::StartDoorGenerationAudio()
+{
+    StopDoorGenerationAudio();
+    CancelDoorGenerationReady();
+
+    // Collection tests temporary layouts, not an actual door becoming ready.
+    if (!bEnableDoorGenerationAudio || bSeedCollectionRunning || !GetWorld()
+        || LoopState != EMazeLoopState::Generating || GenerationStage == EGenerationStage::Idle)
+    {
+        return;
+    }
+
+    UArrowComponent* DoorArrow = FindTaggedConnection(CurrentRoom, ChosenDoorTag);
+    if (!IsValid(DoorArrow))
+    {
+        return;
+    }
+
+    DoorGenerationAudioLocation = DoorArrow->GetComponentLocation();
+    DoorAudioRandomStream.Initialize(static_cast<int32>(FPlatformTime::Cycles()));
+    bDoorGenerationAudioActive = true;
+    PlayNextDoorGenerationClick();
+}
+
+void AMazeGenerator::StopDoorGenerationAudio()
+{
+    bDoorGenerationAudioActive = false;
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(DoorGenerationClickTimer);
+    }
+    if (UAudioComponent* Click = DoorGenerationClickAudio.Get())
+    {
+        Click->Stop();
+    }
+    DoorGenerationClickAudio.Reset();
+}
+
+void AMazeGenerator::PlayNextDoorGenerationClick()
+{
+    UWorld* World = GetWorld();
+    if (!World || !bDoorGenerationAudioActive || !bEnableDoorGenerationAudio || !IsValid(CurrentRoom)
+        || LoopState != EMazeLoopState::Generating || GenerationStage == EGenerationStage::Idle)
+    {
+        StopDoorGenerationAudio();
+        return;
+    }
+
+    // Allow streamed clips to finish too; only one click clip can play at a time.
+    if (UAudioComponent* Click = DoorGenerationClickAudio.Get())
+    {
+        if (Click->IsPlaying())
+        {
+            World->GetTimerManager().SetTimer(DoorGenerationClickTimer, this, &AMazeGenerator::PlayNextDoorGenerationClick, 0.05f, false);
+            return;
+        }
+    }
+
+    USoundBase* Sound = GenerationClickSound.Get();
+    if (!IsValid(Sound))
+    {
+        return;
+    }
+
+    const float MinPitch = FMath::Clamp(GenerationClickMinPitch, 0.25f, 2.0f);
+    const float MaxPitch = FMath::Clamp(GenerationClickMaxPitch, MinPitch, 2.0f);
+    const float Pitch = DoorAudioRandomStream.FRandRange(MinPitch, MaxPitch);
+    DoorGenerationClickAudio = UGameplayStatics::SpawnSoundAtLocation(this, Sound, DoorGenerationAudioLocation,
+        FRotator::ZeroRotator, FMath::Clamp(GenerationClickVolume, 0.0f, 2.0f), Pitch,
+        0.0f, GetDoorGenerationAttenuation(), nullptr, true);
+
+    const float MinGap = FMath::Clamp(GenerationClickMinGap, 0.0f, 5.0f);
+    const float MaxGap = FMath::Clamp(GenerationClickMaxGap, MinGap, 5.0f);
+    const float Gap = DoorAudioRandomStream.FRandRange(MinGap, MaxGap);
+    const float SoundDuration = Sound->GetDuration();
+    const float PitchedDuration = FMath::IsFinite(SoundDuration) ? FMath::Max(0.0f, SoundDuration / Pitch) : 0.0f;
+    World->GetTimerManager().SetTimer(DoorGenerationClickTimer, this, &AMazeGenerator::PlayNextDoorGenerationClick,
+        FMath::Max(0.05f, PitchedDuration + Gap), false);
+}
+
+void AMazeGenerator::PlayDoorGenerationSteam(const FVector& Location)
+{
+    if (!bEnableDoorGenerationAudio || !GetWorld())
+    {
+        return;
+    }
+    USoundBase* Sound = GenerationReadySteamSound.Get();
+    if (!IsValid(Sound))
+    {
+        return;
+    }
+
+    const float MinPitch = FMath::Clamp(GenerationSteamMinPitch, 0.25f, 2.0f);
+    const float MaxPitch = FMath::Clamp(GenerationSteamMaxPitch, MinPitch, 2.0f);
+    DoorGenerationSteamAudio = UGameplayStatics::SpawnSoundAtLocation(this, Sound, Location,
+        FRotator::ZeroRotator, FMath::Clamp(GenerationSteamVolume, 0.0f, 2.0f),
+        DoorAudioRandomStream.FRandRange(MinPitch, MaxPitch), 0.0f, GetDoorGenerationAttenuation(), nullptr, true);
+    // A short fixed lead lets the pressure release begin before door movement.
+    // The asset itself has an immediate onset, and keeps playing after release.
+    DoorGenerationSteamReleaseAt = DoorGenerationSteamAudio.IsValid() ? GetWorld()->GetTimeSeconds() + 0.12 : 0.0;
+}
+
+void AMazeGenerator::CancelDoorGenerationReady(bool bStopSteam)
+{
+    // A cancelled timer must never unlock a door in a later request or level.
+    bWaitingForDoorGenerationSteam = false;
+    DoorGenerationReadyRoom.Reset();
+    DoorGenerationReadyDoorTag = NAME_None;
+    DoorGenerationSteamReleaseAt = 0.0;
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(DoorGenerationReadyTimer);
+    }
+    if (bStopSteam)
+    {
+        if (UAudioComponent* Steam = DoorGenerationSteamAudio.Get())
+        {
+            Steam->Stop();
+        }
+        DoorGenerationSteamAudio.Reset();
+    }
+}
+
+void AMazeGenerator::CheckDoorGenerationSteamLeadIn()
+{
+    if (!bWaitingForDoorGenerationSteam)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+    AMazeActors* CompletedRoom = DoorGenerationReadyRoom.Get();
+    const FName CompletedDoorTag = DoorGenerationReadyDoorTag;
+    if (!World || IsActorBeingDestroyed() || !IsValid(CompletedRoom) || CompletedRoom != CurrentRoom
+        || CompletedDoorTag != ChosenDoorTag || !IsValid(NextRoom) || LoopState != EMazeLoopState::Generating)
+    {
+        CancelDoorGenerationReady();
+        return;
+    }
+
+    // Start the airlock hiss before unlocking, then let it continue through
+    // the opening animation. Empty/failed/very short sounds never trap a door.
+    if (UAudioComponent* Steam = DoorGenerationSteamAudio.Get())
+    {
+        if (Steam->IsPlaying() && World->GetTimeSeconds() < DoorGenerationSteamReleaseAt)
+        {
+            World->GetTimerManager().SetTimer(DoorGenerationReadyTimer, this,
+                &AMazeGenerator::CheckDoorGenerationSteamLeadIn, 0.025f, false);
+            return;
+        }
+    }
+
+    // Clear only the pending unlock. Keep the active steam until it ends naturally.
+    CancelDoorGenerationReady(false);
+    LoopState = EMazeLoopState::TraversingMaze;
+    UnlockedDoorTags.Reset();
+    UnlockedDoorTags.Add(CompletedDoorTag);
+    ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
+
+    TArray<FName> DestinationDoors;
+    DestinationDoors.Add(NextRoomEntranceTag);
+    ApplyDoorLocks(NextRoom, DestinationDoors);
+
+    // The matching door opens now and stays open until OnMazeDoorPassed requests closing.
+    OnMazeGenerationFinished.Broadcast(CompletedRoom, CompletedDoorTag, true);
+    StartDoorPassageCheck();
+}
+
+void AMazeGenerator::StopDoorPassageCheck()
+{
+    bWatchingDoorPassage = false;
+    DoorPassageRoom.Reset();
+    DoorPassageTag = NAME_None;
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(DoorPassageTimer);
+    }
+}
+
+void AMazeGenerator::StartDoorPassageCheck()
+{
+    if (bWatchingDoorPassage && DoorPassageRoom.Get() == CurrentRoom && DoorPassageTag == ChosenDoorTag)
+    {
+        return;
+    }
+    StopDoorPassageCheck();
+    UWorld* World = GetWorld();
+    if (!World || LoopState != EMazeLoopState::TraversingMaze || !IsValid(CurrentRoom)
+        || ChosenDoorTag.IsNone() || !IsDoorUnlocked(CurrentRoom, ChosenDoorTag))
+    {
+        return;
+    }
+    DoorPassageRoom = CurrentRoom;
+    DoorPassageTag = ChosenDoorTag;
+    bWatchingDoorPassage = true;
+    World->GetTimerManager().SetTimer(DoorPassageTimer, this, &AMazeGenerator::CheckDoorPassage, 0.04f, false);
+}
+
+bool AMazeGenerator::HasPlayerClearedSourceDoor(APawn* Player) const
+{
+    if (!IsValid(Player) || !Player->IsPlayerControlled())
+    {
+        return false;
+    }
+    UArrowComponent* Exit = FindTaggedConnection(CurrentRoom, ChosenDoorTag);
+    if (!IsValid(Exit))
+    {
+        return false;
+    }
+    const FVector Outward = Exit->GetForwardVector().GetSafeNormal2D();
+    if (Outward.IsNearlyZero())
+    {
+        return false;
+    }
+    FVector BoundsOrigin;
+    FVector BoundsExtent;
+    Player->GetActorBounds(true, BoundsOrigin, BoundsExtent);
+    const double CenterDistance = FVector::DotProduct(BoundsOrigin - Exit->GetComponentLocation(), Outward);
+    const double ProjectedExtent = FVector::DotProduct(BoundsExtent, Outward.GetAbs());
+    return CenterDistance - ProjectedExtent >= FMath::Max(0.0f, DepartureClearance);
+}
+
+void AMazeGenerator::CheckDoorPassage()
+{
+    if (!bWatchingDoorPassage)
+    {
+        return;
+    }
+    UWorld* World = GetWorld();
+    AMazeActors* Room = DoorPassageRoom.Get();
+    const FName DoorTag = DoorPassageTag;
+    if (!World || IsActorBeingDestroyed() || LoopState != EMazeLoopState::TraversingMaze
+        || !IsValid(Room) || Room != CurrentRoom || DoorTag != ChosenDoorTag || !IsDoorUnlocked(Room, DoorTag))
+    {
+        StopDoorPassageCheck();
+        return;
+    }
+    APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!HasPlayerClearedSourceDoor(Player))
+    {
+        // Stay open even after the steam ends or the player retreats into the room.
+        World->GetTimerManager().SetTimer(DoorPassageTimer, this, &AMazeGenerator::CheckDoorPassage, 0.04f, false);
+        return;
+    }
+    StopDoorPassageCheck();
+    OnMazeDoorPassed.Broadcast(Room, DoorTag, Player);
+}
+
 void AMazeGenerator::FinishGeneration(bool bSuccess)
 {
     if (HandleSeedAttemptFinished(bSuccess))
@@ -3142,6 +3409,8 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
 
     AMazeActors* CompletedRoom = CurrentRoom;
     const FName CompletedDoorTag = ChosenDoorTag;
+    const bool bPlayReadySteam = bDoorGenerationAudioActive;
+    const FVector CompletedAudioLocation = DoorGenerationAudioLocation;
     const TArray<FName> PreviousDoors = PreviousUnlockedDoorTags;
     LastGenerationSeconds = static_cast<float>(FPlatformTime::Seconds() - GenerationStartedAt);
     LastGenerationAttempts = TotalGenerationAttempts;
@@ -3164,7 +3433,10 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
     {
         InitializeRoom(NextRoom);
 
-        LoopState = EMazeLoopState::TraversingMaze;
+        // Keep ChooseDoor/IsDoorUnlocked blocked until the airlock hiss has started.
+        LoopState = EMazeLoopState::Generating;
+        ApplyDoorLocks(CurrentRoom, TArray<FName>{});
+        ApplyDoorLocks(NextRoom, TArray<FName>{});
 
         EnableChaserSpawnTrigger();
 
@@ -3172,14 +3444,6 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         {
             Puzzle->ArmPuzzle();
         }
-
-        UnlockedDoorTags.Reset();
-        UnlockedDoorTags.Add(ChosenDoorTag);
-        ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
-
-        TArray<FName> DestinationDoors;
-        DestinationDoors.Add(NextRoomEntranceTag);
-        ApplyDoorLocks(NextRoom, DestinationDoors);
 
         UE_LOG(LogTemp, Display, TEXT("Maze: %d main-route hallways and %d branch hallways generated, including %d enemy hallways across both paths. Navigation ready; all side openings closed."), GenerationHallwayCount, GenerationBranchCount, SpawnedEnemyHallwayActors.Num());
         UE_LOG(LogTemp, Display, TEXT("Maze: Ready in %.2fs (target %.2fs; navigation/final setup %.2fs). Attempts: %d. Local repairs: %d."), LastGenerationSeconds, TargetGenerationSeconds, NavigationSeconds, LastGenerationAttempts, LastGenerationBacktracks);
@@ -3194,12 +3458,30 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         UE_LOG(LogTemp, Error, TEXT("Maze: Could not generate a complete route with all side openings capped. Check piece bounds or layout settings."));
     }
 
-    // Blueprints may open the chosen door now, after the maze and locks are ready.
-    OnMazeGenerationFinished.Broadcast(CompletedRoom, CompletedDoorTag, bSuccess);
+    if (bSuccess)
+    {
+        DoorGenerationReadyRoom = CompletedRoom;
+        DoorGenerationReadyDoorTag = CompletedDoorTag;
+        bWaitingForDoorGenerationSteam = true;
+        if (bPlayReadySteam)
+        {
+            PlayDoorGenerationSteam(CompletedAudioLocation);
+        }
+
+        // With no assigned/playable steam, complete immediately instead of
+        // leaving the player locked out. Otherwise allow the short steam lead-in.
+        CheckDoorGenerationSteamLeadIn();
+        return;
+    }
+
+    OnMazeGenerationFinished.Broadcast(CompletedRoom, CompletedDoorTag, false);
 }
 
 void AMazeGenerator::CancelGeneration()
 {
+    StopDoorPassageCheck();
+    StopDoorGenerationAudio();
+    CancelDoorGenerationReady();
     ResetSeedSession();
     UnlockGenerationNavigation();
     ResetRouteSearch();
@@ -3482,7 +3764,13 @@ bool AMazeGenerator::ChooseDoor(AMazeActors* Room, FName DoorTag)
     // Reopening the route's two endpoint doors never generates another maze.
     if (LoopState == EMazeLoopState::TraversingMaze)
     {
-        return IsDoorUnlocked(Room, DoorTag);
+        const bool bCanOpen = IsDoorUnlocked(Room, DoorTag);
+        if (bCanOpen && Room == CurrentRoom && DoorTag == ChosenDoorTag)
+        {
+            // Reopening after a retreat during closing starts a fresh passage check.
+            StartDoorPassageCheck();
+        }
+        return bCanOpen;
     }
 
     if (LoopState != EMazeLoopState::WaitingForDoor || !IsDoorUnlocked(Room, DoorTag))
@@ -3557,6 +3845,10 @@ bool AMazeGenerator::ChooseDoor(AMazeActors* Room, FName DoorTag)
         PreviousUnlockedDoorTags.Reset();
         LoopState = EMazeLoopState::WaitingForDoor;
         ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
+    }
+    else
+    {
+        StartDoorGenerationAudio();
     }
 
     // A new request cannot open yet. OnMazeGenerationFinished handles its opening.
@@ -3789,34 +4081,11 @@ bool AMazeGenerator::PlayerEnteredMaze(AMazeActors* Room, FName DoorTag, APawn* 
         return false;
     }
 
-    UArrowComponent* Exit = FindTaggedConnection(Room, DoorTag);
-
-    if (!IsValid(Exit))
+    if (!HasPlayerClearedSourceDoor(Player))
     {
         return false;
     }
-
-    // Start-room arrows point outward into the maze.
-    const FVector Outward = Exit->GetForwardVector().GetSafeNormal2D();
-
-    if (Outward.IsNearlyZero())
-    {
-        return false;
-    }
-
-    FVector BoundsOrigin;
-    FVector BoundsExtent;
-
-    Player->GetActorBounds(true, BoundsOrigin, BoundsExtent);
-
-    const double CenterDistance = FVector::DotProduct(BoundsOrigin - Exit->GetComponentLocation(), Outward);
-    const double ProjectedExtent = FVector::DotProduct(BoundsExtent, Outward.GetAbs());
-
-    // Walking away on the room side must not lock the chosen door.
-    if (CenterDistance - ProjectedExtent < FMath::Max(0.0f, DepartureClearance))
-    {
-        return false;
-    }
+    StopDoorPassageCheck();
 
     // The player has entered the maze. This door cannot reopen during this run.
     UnlockedDoorTags.Remove(DoorTag);

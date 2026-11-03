@@ -15,9 +15,13 @@ class APawn;
 class ANavMeshBoundsVolume;
 class UMazePuzzleComponent;
 class UNavigationSystemV1;
+class UAudioComponent;
+class USoundBase;
+class USoundAttenuation;
 struct FMazeStartRoomSaveData;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnMazeGenerationFinished, AMazeActors*, Room, FName, DoorTag, bool, bSuccess);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnMazeDoorPassed, AMazeActors*, Room, FName, DoorTag, APawn*, Player);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMazePuzzleCompleted, FName, PuzzleId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllMazePuzzlesEscaped);
@@ -444,9 +448,51 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Loop")
     int32 RoomsCompleted = 0;
 
-    // Fired once when the door request succeeds, times out, or encounters a configuration error.
+    // Both start-room types use this feedback at the selected doorway's tagged arrow.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio")
+    bool bEnableDoorGenerationAudio = true;
+
+    // One non-looping heavy lock/bolt clip. Every playback gets a new pitch.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (DisplayName = "Mechanical Lock Sound"))
+    TObjectPtr<USoundBase> GenerationClickSound = nullptr;
+
+    // One non-looping airlock release. Pitch changes on each successful generation.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (DisplayName = "Airlock Steam Sound"))
+    TObjectPtr<USoundBase> GenerationReadySteamSound = nullptr;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.25", ClampMax = "2.0"))
+    float GenerationClickMinPitch = 0.85f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.25", ClampMax = "2.0"))
+    float GenerationClickMaxPitch = 1.15f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.25", ClampMax = "2.0"))
+    float GenerationSteamMinPitch = 0.9f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.25", ClampMax = "2.0"))
+    float GenerationSteamMaxPitch = 1.1f;
+
+    // Random silence after the pitched click finishes, so full clips do not overlap.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.0", ClampMax = "5.0", Units = "s"))
+    float GenerationClickMinGap = 0.1f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.0", ClampMax = "5.0", Units = "s"))
+    float GenerationClickMaxGap = 0.25f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+    float GenerationClickVolume = 0.7f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+    float GenerationSteamVolume = 0.9f;
+
+    // Success follows the start of the airlock hiss; steam continues while the door opens.
     UPROPERTY(BlueprintAssignable, Category = "Maze|Loop")
     FOnMazeGenerationFinished OnMazeGenerationFinished;
+
+    // Close the chosen source door only after the player has fully passed into the maze.
+    // Bind before ChooseDoor, and route the matching event to the door's closing Timeline.
+    UPROPERTY(BlueprintAssignable, Category = "Maze|Doors")
+    FOnMazeDoorPassed OnMazeDoorPassed;
 
     // True means the door can open now. A new request starts generation and returns false.
     // Bind OnMazeGenerationFinished before calling this for a new door choice.
@@ -791,6 +837,39 @@ private:
 
     UFUNCTION()
     void OnChaserSpawnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    // Audio never consumes the layout RNG or FMath's global random sequence.
+    FRandomStream DoorAudioRandomStream;
+    FTimerHandle DoorGenerationClickTimer;
+    FTimerHandle DoorGenerationReadyTimer;
+    FTimerHandle DoorPassageTimer;
+    TWeakObjectPtr<AMazeActors> DoorPassageRoom;
+    FName DoorPassageTag = NAME_None;
+    bool bWatchingDoorPassage = false;
+    TWeakObjectPtr<AMazeActors> DoorGenerationReadyRoom;
+    FName DoorGenerationReadyDoorTag = NAME_None;
+    bool bWaitingForDoorGenerationSteam = false;
+    double DoorGenerationSteamReleaseAt = 0.0;
+    TWeakObjectPtr<UAudioComponent> DoorGenerationClickAudio;
+    TWeakObjectPtr<UAudioComponent> DoorGenerationSteamAudio;
+
+    UPROPERTY(Transient)
+    TObjectPtr<USoundAttenuation> DefaultDoorGenerationAttenuation = nullptr;
+
+    FVector DoorGenerationAudioLocation = FVector::ZeroVector;
+    bool bDoorGenerationAudioActive = false;
+
+    void StartDoorGenerationAudio();
+    void StopDoorGenerationAudio();
+    void PlayNextDoorGenerationClick();
+    void PlayDoorGenerationSteam(const FVector& Location);
+    void CheckDoorGenerationSteamLeadIn();
+    void CancelDoorGenerationReady(bool bStopSteam = true);
+    USoundAttenuation* GetDoorGenerationAttenuation();
+    void StartDoorPassageCheck();
+    void CheckDoorPassage();
+    void StopDoorPassageCheck();
+    bool HasPlayerClearedSourceDoor(APawn* Player) const;
 
     FRandomStream RandomStream;
 
