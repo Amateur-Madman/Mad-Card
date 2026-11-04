@@ -3400,6 +3400,14 @@ void AMazeGenerator::CheckDoorGenerationSteamLeadIn()
     DestinationDoors.Add(NextRoomEntranceTag);
     ApplyDoorLocks(NextRoom, DestinationDoors);
 
+    // Entry triggers require TraversingMaze. Activate them after the steam
+    // lead-in, before doors receive the ready event and the player can enter.
+    EnableChaserSpawnTrigger();
+    if (UMazePuzzleComponent* Puzzle = GetPuzzleComponent())
+    {
+        Puzzle->ArmPuzzle();
+    }
+
     // The matching door opens now and stays open until OnMazeDoorPassed requests closing.
     OnMazeGenerationFinished.Broadcast(CompletedRoom, CompletedDoorTag, true);
     StartDoorPassageCheck();
@@ -3522,13 +3530,6 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         LoopState = EMazeLoopState::Generating;
         ApplyDoorLocks(CurrentRoom, TArray<FName>{});
         ApplyDoorLocks(NextRoom, TArray<FName>{});
-
-        EnableChaserSpawnTrigger();
-
-        if (UMazePuzzleComponent* Puzzle = GetPuzzleComponent())
-        {
-            Puzzle->ArmPuzzle();
-        }
 
         UE_LOG(LogTemp, Display, TEXT("Maze: %d main-route hallways and %d branch hallways generated, including %d enemy hallways across both paths. Navigation ready; all side openings closed."), GenerationHallwayCount, GenerationBranchCount, SpawnedEnemyHallwayActors.Num());
         UE_LOG(LogTemp, Display, TEXT("Maze: Ready in %.2fs (target %.2fs; navigation/final setup %.2fs). Attempts: %d. Local repairs: %d."), LastGenerationSeconds, TargetGenerationSeconds, NavigationSeconds, LastGenerationAttempts, LastGenerationBacktracks);
