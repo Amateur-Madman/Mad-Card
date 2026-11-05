@@ -7,6 +7,8 @@
 #include "Framework/Application/IInputProcessor.h"
 #include "WrittingBoard.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInput);
+
 class FBoardInputInterceptor : public IInputProcessor
 {
 public:
@@ -30,6 +32,19 @@ public:
 	AWrittingBoard();
 
 	void SendKeyboardInput(const TCHAR& InKey);
+	void AllowInputProcessing();
+	void SetPlayerReady(bool bReady) { PlayerReady = bReady; }
+
+	FOnInput OnRight;
+	FOnInput OnWrong;
+
+	bool CanProcessInput = true;
+	bool PlayerReady = false;
+
+	FTimerHandle InputTimer;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	float InputCooldown = 2.0f;
 
 protected:
 	// Called when the game starts or when spawned
@@ -45,9 +60,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SentenceWordUnderlinedClass;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
+	class USentenceWordUnderlined* MainTextWidget;
+
 private:
 	float DrawX = 1920.0f;
 	float DrawY = 1080.0f;
 
 	TSharedPtr<FBoardInputInterceptor> InputProcessor;
+
+	UFUNCTION()
+	void HandleWin();
+
+	UFUNCTION()
+	void HandleLose();
 };

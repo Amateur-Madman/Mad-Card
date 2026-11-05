@@ -8,6 +8,7 @@ void UCharUnderlined::FillLetter()
 {
 	FString CharString = FString(1, &LetterData.Char);
 	Letter->SetText(FText::FromString(CharString));
+	IsRevealed = true;
 }
 
 //Auto fill spaces with a possible random font
@@ -28,4 +29,12 @@ void UCharUnderlined::NotALetter(TCHAR& bLetter)
 {
 	Letter->SetText(FText::FromString(FString(1, &bLetter)));
 	Underscore->SetText(FText::FromString(""));
+	IsRevealed = true;
+}
+
+void UCharUnderlined::Incorrect(TCHAR& bLetter)
+{
+	NotALetter(bLetter);
+	Letter->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
+	LetterData.Char = bLetter;
 }

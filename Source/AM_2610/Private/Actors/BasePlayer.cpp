@@ -253,6 +253,7 @@ void ABasePlayer::BeginPlay()
 	if (AnimationReference)
 	{
 		AnimationReference->OnDeathEnded.AddDynamic(this, &ABasePlayer::PlayerLost);
+		AnimationReference->OnSitEnded.AddDynamic(this, &ABasePlayer::HandleSitEnded);
 	}
 	if (!ThePlayerController || HUDClass.IsNull())
 	{
@@ -401,6 +402,17 @@ void ABasePlayer::HandleDeath(float Percent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ABasePlayer::HandleDeath - GetController() did not cast to APlayerController, could not disable input"));
 	}
+}
+
+void ABasePlayer::HandleSitEnded()
+{
+	if (bIsDead)
+	{
+		return;
+	}
+
+	// TODO: whatever should happen once the sit animation is done
+	// (e.g. re-enable input if you locked it when the sit started)
 }
 void ABasePlayer::PlayerLost()
 {

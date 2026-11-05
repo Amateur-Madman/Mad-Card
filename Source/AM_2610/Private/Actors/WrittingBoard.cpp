@@ -8,6 +8,7 @@
 #include "Actors/BasePlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Actors/BaseGameMode.h"
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -21,7 +22,7 @@ AWrittingBoard::AWrittingBoard()
 		CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
 		SetRootComponent(CanvasComponent);
 		CanvasComponent->SetDrawSize(FVector2D(DrawX, DrawY));
-		CanvasComponent->SetRelativeScale3D(FVector(0.4f, 0.4f, 0.4f));
+		CanvasComponent->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
 	}
 
 	float HalfWidth = DrawX / 2.0f;
@@ -35,22 +36,6 @@ AWrittingBoard::AWrittingBoard()
 		EditorOutline->SetHiddenInGame(true);
 		EditorOutline->SetLineThickness(4.0f);
 		EditorOutline->ShapeColor = FColor::Yellow; 
-	}
-}
-
-void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
-{
-	if (CanvasComponent)
-	{
-		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
-		if (BaseWidget)
-		{
-			USentenceWordUnderlined* MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
-			if (MainTextWidget)
-			{
-				MainTextWidget->CheckInput(InKey);
-			}
-		}
 	}
 }
 
@@ -68,10 +53,12 @@ void AWrittingBoard::BeginPlay()
 
 		if (BaseWidget)
 		{
-			USentenceWordUnderlined* MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
+			MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
 			if (MainTextWidget)
 			{
 				MainTextWidget->SetupAccordingToDiff();
+				MainTextWidget->OnCompleted.AddDynamic(this, &AWrittingBoard::HandleWin);
+				MainTextWidget->OnFailed.AddDynamic(this, &AWrittingBoard::HandleLose);
 			}
 		}
 
@@ -95,9 +82,47 @@ void AWrittingBoard::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void AWrittingBoard::HandleWin()
+{
+	if (ABaseGameMode* GameMode = Cast<ABaseGameMode>(GetWorld()->GetAuthGameMode()))
+	{
+		GameMode->TriggerWin();
+	}
+}
+
+void AWrittingBoard::HandleLose()
+{
+	if (ABaseGameMode* GameMode = Cast<ABaseGameMode>(GetWorld()->GetAuthGameMode()))
+	{
+		GameMode->TriggerLose();
+	}
+}
+
+void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
+{
+	if (MainTextWidget)
+	{
+		if (MainTextWidget->CheckInput(InKey))
+		{
+			// Correct input
+			OnRight.Broadcast();
+		}
+		else
+		{
+			// Incorrect input
+			OnWrong.Broadcast();
+		}
+	}
+}
+
+void AWrittingBoard::AllowInputProcessing()
+{
+	CanProcessInput = true;
+}
+
 bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent)
 {
-	if(TargetBoard)
+	if(TargetBoard && TargetBoard->CanProcessInput && TargetBoard->PlayerReady)
 	{
 		FKey PressedKey = InKeyEvent.GetKey();
 		FString KeyName = PressedKey.ToString();
@@ -111,7 +136,13 @@ bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, con
 			}
 			TargetBoard->SendKeyboardInput(Letter);
 		}
-		//return true;
+		TargetBoard->CanProcessInput = false;
+		TargetBoard->GetWorld()->GetTimerManager().SetTimer(
+			TargetBoard->InputTimer,
+			TargetBoard, 
+			&AWrittingBoard::AllowInputProcessing, 
+			TargetBoard->InputCooldown, 
+			false);
 	}
 	return false;
 }
