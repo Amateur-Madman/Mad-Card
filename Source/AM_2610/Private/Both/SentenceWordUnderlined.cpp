@@ -79,7 +79,7 @@ bool USentenceWordUnderlined::CheckIfAllLettersRevealed()
 {
     for (int32 i = 0; i < AllLetters.Num(); i++)
     {
-        if (!AllLetters[i].IsRevealed)
+        if (AllLetters[i].GetParent()->IsRevealed == false)
         {
             return false;
         }
@@ -100,6 +100,7 @@ bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
             ValidInput = true;
         }
     }
+    CheckIfAllLettersRevealed();
 
     if(ValidInput == false)
     {
@@ -113,6 +114,5 @@ bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
             }
         }
     }
-	CheckIfAllLettersRevealed();
     return ValidInput;
 }

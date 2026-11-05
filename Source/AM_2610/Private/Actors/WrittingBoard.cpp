@@ -22,7 +22,7 @@ AWrittingBoard::AWrittingBoard()
 		CanvasComponent->SetWidgetSpace(EWidgetSpace::World);
 		SetRootComponent(CanvasComponent);
 		CanvasComponent->SetDrawSize(FVector2D(DrawX, DrawY));
-		CanvasComponent->SetRelativeScale3D(FVector(0.4f, 0.4f, 0.4f));
+		CanvasComponent->SetRelativeScale3D(FVector(0.3f, 0.3f, 0.3f));
 	}
 
 	float HalfWidth = DrawX / 2.0f;
@@ -115,9 +115,14 @@ void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
 	}
 }
 
+void AWrittingBoard::AllowInputProcessing()
+{
+	CanProcessInput = true;
+}
+
 bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent)
 {
-	if(TargetBoard)
+	if(TargetBoard && TargetBoard->CanProcessInput && TargetBoard->PlayerReady)
 	{
 		FKey PressedKey = InKeyEvent.GetKey();
 		FString KeyName = PressedKey.ToString();
@@ -131,6 +136,13 @@ bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, con
 			}
 			TargetBoard->SendKeyboardInput(Letter);
 		}
+		TargetBoard->CanProcessInput = false;
+		TargetBoard->GetWorld()->GetTimerManager().SetTimer(
+			TargetBoard->InputTimer,
+			TargetBoard, 
+			&AWrittingBoard::AllowInputProcessing, 
+			TargetBoard->InputCooldown, 
+			false);
 	}
 	return false;
 }

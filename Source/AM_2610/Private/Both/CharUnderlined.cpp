@@ -3,14 +3,12 @@
 
 #include "Both/CharUnderlined.h"
 #include "Components/TextBlock.h"
-#include "../AM_2610.h"
 
 void UCharUnderlined::FillLetter()
 {
 	FString CharString = FString(1, &LetterData.Char);
 	Letter->SetText(FText::FromString(CharString));
-	LetterData.IsRevealed = true;
-	UE_LOG(LogTemp, Warning, TEXT("Letter %c revealed"), LetterData.Char);
+	IsRevealed = true;
 }
 
 //Auto fill spaces with a possible random font
@@ -31,6 +29,7 @@ void UCharUnderlined::NotALetter(TCHAR& bLetter)
 {
 	Letter->SetText(FText::FromString(FString(1, &bLetter)));
 	Underscore->SetText(FText::FromString(""));
+	IsRevealed = true;
 }
 
 void UCharUnderlined::Incorrect(TCHAR& bLetter)

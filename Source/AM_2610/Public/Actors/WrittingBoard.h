@@ -32,9 +32,19 @@ public:
 	AWrittingBoard();
 
 	void SendKeyboardInput(const TCHAR& InKey);
+	void AllowInputProcessing();
+	void SetPlayerReady(bool bReady) { PlayerReady = bReady; }
 
 	FOnInput OnRight;
 	FOnInput OnWrong;
+
+	bool CanProcessInput = true;
+	bool PlayerReady = false;
+
+	FTimerHandle InputTimer;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	float InputCooldown = 2.0f;
 
 protected:
 	// Called when the game starts or when spawned
