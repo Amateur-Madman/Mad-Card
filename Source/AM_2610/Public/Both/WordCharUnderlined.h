@@ -31,6 +31,7 @@ public:
     TArray<struct FMadLetter> LetterDatas;
 
     void AddIncorrect(TCHAR& bLetter);
+    bool CheckExistingLetters(TCHAR& bLetter);
 
 private:
     const TArray<TCHAR> Punctuation = {TEXT('\''), TEXT('-'), TEXT('?'), TEXT('!'), TEXT('.')};

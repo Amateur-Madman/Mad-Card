@@ -2,7 +2,6 @@
 
 
 #include "Both/SentenceWordUnderlined.h"
-//#include "Both/CharUnderlined.h"
 #include "Both/WordCharUnderlined.h"
 #include "Components/WrapBox.h"
 #include "Enviornment/MazeSaveSubsystem.h"
@@ -23,11 +22,13 @@ void USentenceWordUnderlined::SetupAccordingToDiff()
             {
                 RandomIndex = FMath::RandRange(0, HardArray.Num() - 1);
                 Setup(HardArray[RandomIndex]);
+				WrongGuessLimit = HardWrongGuessLimit;
             }
             else
             {
                 RandomIndex = FMath::RandRange(0, EasyArray.Num() - 1);
                 Setup(EasyArray[RandomIndex]);
+				WrongGuessLimit = EasyWrongGuessLimit;
             }
         }
     }
@@ -74,17 +75,44 @@ void USentenceWordUnderlined::AddToLetters(TArray<struct FMadLetter> bMadLetters
     }
 }
 
+bool USentenceWordUnderlined::CheckIfAllLettersRevealed()
+{
+    for (int32 i = 0; i < AllLetters.Num(); i++)
+    {
+        if (!AllLetters[i].IsRevealed)
+        {
+            return false;
+        }
+	}
+	OnCompleted.Broadcast();
+    return true;
+}
+
 bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
 {
+	ValidInput = false;
+
     for (int32 i = 0; i < AllLetters.Num(); i++)
     {
         if (LetterTyped == FChar::ToLower(AllLetters[i].Char) || LetterTyped == FChar::ToUpper(AllLetters[i].Char))
         {
             AllLetters[i].GetParent()->FillLetter();
-			return true;
+            ValidInput = true;
         }
     }
 
-	WrongGuessBox->GuessBox->AddIncorrect(LetterTyped);
-    return false;
+    if(ValidInput == false)
+    {
+        if(!WrongGuessBox->GuessBox->CheckExistingLetters(LetterTyped))
+        {
+            WrongGuessCount++;
+            if(WrongGuessCount >= WrongGuessLimit)
+            {
+                // Handle reaching the wrong guess limit
+				OnFailed.Broadcast();
+            }
+        }
+    }
+	CheckIfAllLettersRevealed();
+    return ValidInput;
 }

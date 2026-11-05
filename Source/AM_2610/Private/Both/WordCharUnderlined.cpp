@@ -4,7 +4,6 @@
 #include "Both/WordCharUnderlined.h"
 #include "Components/HorizontalBox.h"
 #include "Components/TextBlock.h"
-//#include "Both/CharUnderlined.h"
 
 //Make blank spaces for word
 void UWordCharUnderlined::InitializeWord(FString& NewWord)
@@ -37,6 +36,7 @@ void UWordCharUnderlined::AddIncorrect(TCHAR& bLetter)
     if (CharWidget)
     {
         CharWidget->Incorrect(bLetter);
+        LetterDatas.Add(CharWidget->LetterData);
         Word->AddChildToHorizontalBox(CharWidget);
     }
 
@@ -50,7 +50,7 @@ void UWordCharUnderlined::AddIncorrect(TCHAR& bLetter)
 //Not having the player guess for punctuation
 bool UWordCharUnderlined::CheckIfNotLetter(UCharUnderlined* bCharWidget, TCHAR& bLetter)
 {
-    for (int32 i = 0; i < Punctuation.Num() - 1; i++)
+    for (int32 i = 0; i < Punctuation.Num(); i++)
     {
         if (bLetter == Punctuation[i])
         {
@@ -58,5 +58,18 @@ bool UWordCharUnderlined::CheckIfNotLetter(UCharUnderlined* bCharWidget, TCHAR& 
             return true;
         }
     }
+    return false;
+}
+
+bool UWordCharUnderlined::CheckExistingLetters(TCHAR& bLetter)
+{
+    for(int32 i = 0; i < LetterDatas.Num(); i++)
+    {
+        if (bLetter == LetterDatas[i].Char)
+        {
+            return true;
+        }
+	}
+    AddIncorrect(bLetter);
     return false;
 }

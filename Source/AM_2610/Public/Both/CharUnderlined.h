@@ -22,6 +22,8 @@ struct FMadLetter
 
 	TCHAR Char;
 
+	bool IsRevealed = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TArray<FSlateFontInfo> FontOptions;
 };
@@ -44,6 +46,6 @@ public:
 	void NotALetter(TCHAR& bLetter);
 	void Incorrect(TCHAR& bLetter);
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Letter Setup")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Letter Setup")
 	FMadLetter LetterData;
 };

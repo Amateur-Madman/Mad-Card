@@ -7,6 +7,7 @@
 #include "CharUnderlined.h"
 #include "SentenceWordUnderlined.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnResult);
 /**
  * 
  */
@@ -31,13 +32,28 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SpaceWidgetClass;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	int32 EasyWrongGuessLimit = 7;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	int32 HardWrongGuessLimit = 4;
+
 	bool CheckInput(TCHAR LetterTyped);
+
+	FOnResult OnCompleted;
+	FOnResult OnFailed;
 
 private:
 	void Setup(const FString& bWordOrPhrase);
 	void AddToLetters(TArray<struct FMadLetter> bMadLetters);
+	bool CheckIfAllLettersRevealed();
 
 	TArray<struct FMadLetter> AllLetters;
+
+	int32 WrongGuessCount = 0;
+	int32 WrongGuessLimit = 0;
+
+	bool ValidInput = false;
 
 protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
