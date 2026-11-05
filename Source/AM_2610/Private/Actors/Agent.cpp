@@ -4,6 +4,8 @@
 #include "Actors/Agent.h"
 #include "Components/SphereComponent.h"
 #include "Both/CharacterAnimation.h"
+#include "TimerManager.h"
+#include "Engine/World.h"
 #include "../AM_2610.h"
 
 AAgent::AAgent()
@@ -35,4 +37,29 @@ void AAgent::BeginPlay()
 	{
 		CharacterAnimation = Cast<UCharacterAnimation>(AnimInstance);
 	}
+	if (ScanOverlayMaterial)
+	{
+		ScanMID = UMaterialInstanceDynamic::Create(ScanOverlayMaterial, this);
+	}
+}
+
+void AAgent::ScanRevealed_Implementation(float Duration)
+{
+	if (!ScanMID || Duration <= 0.0f)
+	{
+		return;
+	}
+
+	const float Now = GetWorld()->GetTimeSeconds();
+	ScanMID->SetScalarParameterValue(StartTimeParameter, Now);             // the material restarts its flash
+	ScanMID->SetScalarParameterValue(EndTimeParameter, Now + Duration);
+	GetMesh()->SetOverlayMaterial(ScanMID);
+
+	// Calling SetTimer on an active handle resets it, so a second scan extends the reveal
+	GetWorldTimerManager().SetTimer(ScanEndTimer, this, &AAgent::EndScan, Duration, false);
+}
+
+void AAgent::EndScan()
+{
+	GetMesh()->SetOverlayMaterial(nullptr);
 }

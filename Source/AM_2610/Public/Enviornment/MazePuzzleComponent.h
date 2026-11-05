@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "TimerManager.h"
 #include "MazePuzzleComponent.generated.h"
 
 class AMazeGenerator;
@@ -12,6 +13,8 @@ class APawn;
 class UArrowComponent;
 class UBoxComponent;
 class UPrimitiveComponent;
+class UMeshComponent;
+class UMaterialInstanceDynamic;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleButtonsUnlocked);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleConsoleStateChanged, bool, bRed);
@@ -41,6 +44,28 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Buttons")
     FName PuzzleDoorTag = TEXT("PuzzleDoor");
 
+    // Tag only the doorway indicator meshes, including meshes inside child actors.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
+    FName StatusLightComponentTag = TEXT("PuzzleStatusLight");
+
+    // Material slot containing the glowing strips, rather than the door/frame body.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status", meta = (ClampMin = "0"))
+    int32 StatusLightMaterialIndex = 0;
+
+    // Vector parameter in the indicator material, multiplied into Emissive Color.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
+    FName StatusLightColorParameter = TEXT("StatusColor");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
+    FLinearColor IncompleteLightColor = FLinearColor(1.0f, 0.02f, 0.02f);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
+    FLinearColor CompletedLightColor = FLinearColor(0.02f, 1.0f, 0.05f);
+
+    // Existing whole-room overlap box. Keep it around the room and through the doorway.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Departure")
+    FName CompletedExitAreaTag = TEXT("RoomArea");
+
     // The enemy class comes from the generator's Weeping Angel type tag.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Enemies", meta = (ClampMin = "0", ClampMax = "16"))
     int32 WeepingAngelCount = 1;
@@ -60,7 +85,7 @@ public:
 
     // Both buttons make the console ready. They do not unlock the door directly.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
-    bool bButtonsUnlocked = false;
+    bool bButtonsUnlocked = false; 
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
     bool bPuzzleDoorUnlocked = true;
@@ -70,6 +95,10 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
     bool bPuzzleCompleted = false;
+
+    // Remains sealed after a completed puzzle's player has fully left its room area.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|State")
+    bool bPuzzleDoorSealed = false;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
     TArray<TObjectPtr<AMazePuzzleButton>> SpawnedButtons;
@@ -147,4 +176,27 @@ private:
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;
     void ClearSpawnedActors();
+
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> StatusLightMaterials;
+
+    TArray<TWeakObjectPtr<UMeshComponent>> StatusLightMeshes;
+    int32 CachedStatusMaterialIndex = INDEX_NONE;
+    void InitializeStatusLights();
+    void UpdateStatusLights();
+
+    TWeakObjectPtr<UBoxComponent> CompletedExitArea;
+    TWeakObjectPtr<APawn> CompletedExitPlayer;
+    bool bObservedPlayerInPuzzleArea = false;
+    FTimerHandle CompletedExitTimer;
+    void PrepareCompletedExitArea();
+    void ClearCompletedExitArea();
+    void QueueCompletedExitCheck();
+    void CheckCompletedPuzzleExit();
+
+    UFUNCTION()
+    void OnCompletionAreaBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+    UFUNCTION()
+    void OnCompletionAreaEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex);
 };

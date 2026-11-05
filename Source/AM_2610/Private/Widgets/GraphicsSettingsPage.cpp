@@ -9,6 +9,9 @@
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Math/UnrealMathUtility.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -42,12 +45,14 @@ void UGraphicsSettingsPage::NativeConstruct()
 	PopulateFrameLimits();
 	LoadFromSettings();
 	HideConfirmPanel();
+	StartPreviewCapture();
 }
 
 void UGraphicsSettingsPage::NativeDestruct()
 {
 	// If the page goes away mid-countdown, treat it as "not confirmed" and roll back.
 	CancelPendingChanges();
+	StopPreviewCapture();
 	Super::NativeDestruct();
 }
 
@@ -55,7 +60,7 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// Slate ticks with real time, so both of these keep running while the game is paused
+	// Slate ticks with real time, so all of this keeps running while the game is paused
 	// (the pause menu opens this page).
 
 	if (PreviewSizeBox)
@@ -63,6 +68,17 @@ void UGraphicsSettingsPage::NativeTick(const FGeometry& MyGeometry, float InDelt
 		CurrentPreviewSize = FMath::Vector2DInterpTo(CurrentPreviewSize, TargetPreviewSize, InDeltaTime, PreviewInterpSpeed);
 		PreviewSizeBox->SetWidthOverride(static_cast<float>(CurrentPreviewSize.X));
 		PreviewSizeBox->SetHeightOverride(static_cast<float>(CurrentPreviewSize.Y));
+	}
+
+	// Scene capture: only renders for a few frames after a request (open / Apply / Revert / tab re-entry),
+	// or every tick if bLivePreview is on. Otherwise it costs nothing.
+	if (bLivePreview || CaptureFramesRemaining > 0)
+	{
+		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
+		{
+			Capture->CaptureScene();
+		}
+		CaptureFramesRemaining = FMath::Max(0, CaptureFramesRemaining - 1);
 	}
 
 	if (bAwaitingConfirm)
@@ -287,6 +303,7 @@ void UGraphicsSettingsPage::HandleApplyClicked()
 	const bool bDisplayChanged = Pending.IsDisplayDifferent(Prev);
 
 	GI->ApplyGraphics(Pending);
+	RequestPreviewRecapture(); // show the newly applied quality in the preview
 
 	if (bDisplayChanged)
 	{
@@ -347,6 +364,50 @@ void UGraphicsSettingsPage::UpdatePreviewTarget(bool bSnap)
 	{
 		CurrentPreviewSize = TargetPreviewSize;
 	}
+}
+
+void UGraphicsSettingsPage::StartPreviewCapture()
+{
+	UWorld* World = GetWorld();
+	if (!World || !PreviewStageClass)
+	{
+		return;
+	}
+
+	AActor* Stage = UGameplayStatics::GetActorOfClass(World, PreviewStageClass);
+	if (!Stage)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Stage = World->SpawnActor<AActor>(PreviewStageClass, PreviewStageSpawnLocation, FRotator::ZeroRotator, Params);
+		SpawnedStage = Stage;
+	}
+
+	if (Stage)
+	{
+		PreviewCapture = Stage->FindComponentByClass<USceneCaptureComponent2D>();
+		if (USceneCaptureComponent2D* Capture = PreviewCapture.Get())
+		{
+			// The page drives the capture, so the component never renders on its own.
+			Capture->bCaptureEveryFrame = false;
+			Capture->bCaptureOnMovement = false;
+
+			// A few frames (not one) so lighting / scalability have time to settle and the texture isn't black on open.
+			RequestPreviewRecapture();
+		}
+	}
+}
+
+void UGraphicsSettingsPage::StopPreviewCapture()
+{
+	PreviewCapture.Reset();
+	CaptureFramesRemaining = 0;
+
+	if (AActor* Stage = SpawnedStage.Get())
+	{
+		Stage->Destroy();
+	}
+	SpawnedStage.Reset();
 }
 
 void UGraphicsSettingsPage::UpdateLabels()
@@ -435,6 +496,7 @@ void UGraphicsSettingsPage::RestorePreviousSettings()
 	if (UBaseGameInstance* GI = GetGI())
 	{
 		GI->ApplyGraphics(Prev);
+		RequestPreviewRecapture(); // preview back to the restored quality
 	}
 
 	HideConfirmPanel();

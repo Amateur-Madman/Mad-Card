@@ -7,6 +7,8 @@
 #include "Enviornment/MazePuzzleButton.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/MeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -103,7 +105,11 @@ bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName Select
     bPuzzleDoorUnlocked = true;
     bConsoleRed = false;
     bPrepared = true;
+    bPuzzleDoorSealed = false;
+    PrepareCompletedExitArea();
+    InitializeStatusLights();
     IMazeInterface::Execute_SetMazeDoorLocked(Room, PuzzleDoorTag, false);
+    UpdateStatusLights();
     OnConsoleStateChanged.Broadcast(false);
     return true;
 }
@@ -453,6 +459,7 @@ bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
     bPuzzleDoorUnlocked = false;
     bConsoleRed = true;
     IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
+    UpdateStatusLights();
     OnConsoleStateChanged.Broadcast(true);
     SetComponentTickEnabled(true);
     return true;
@@ -468,6 +475,7 @@ bool UMazePuzzleComponent::ActivateConsole(APawn* Player)
     // Readiness stays latched while the player walks from the button to the console.
     bPuzzleDoorUnlocked = true;
     IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
+    UpdateStatusLights();
     OnConsoleActivated.Broadcast();
     return true;
 }
@@ -542,9 +550,222 @@ bool UMazePuzzleComponent::CompletePuzzle()
     }
 
     bPuzzleCompleted = true;
+    UpdateStatusLights();
     SetComponentTickEnabled(bEnemySpawningPending);
+    QueueCompletedExitCheck();
     OnPuzzleCompleted.Broadcast();
     return true;
+}
+
+void UMazePuzzleComponent::InitializeStatusLights()
+{
+    StatusLightMaterials.Reset();
+    StatusLightMeshes.Reset();
+    CachedStatusMaterialIndex = StatusLightMaterialIndex;
+    AActor* Room = GetOwner();
+    if (!IsValid(Room) || StatusLightComponentTag.IsNone() || StatusLightColorParameter.IsNone() || CachedStatusMaterialIndex < 0)
+    {
+        return;
+    }
+
+    TArray<UMeshComponent*> Meshes;
+    Room->GetComponents<UMeshComponent>(Meshes, true);
+    for (UMeshComponent* Mesh : Meshes)
+    {
+        if (!IsValid(Mesh) || !Mesh->ComponentHasTag(StatusLightComponentTag))
+        {
+            continue;
+        }
+        if (CachedStatusMaterialIndex >= Mesh->GetNumMaterials())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Puzzle: Tagged status mesh %s has no material slot %d."), *Mesh->GetName(), CachedStatusMaterialIndex);
+            continue;
+        }
+        UMaterialInterface* Source = Mesh->GetMaterial(CachedStatusMaterialIndex);
+        if (!IsValid(Source))
+        {
+            continue;
+        }
+        // Keep any constant-instance permutation, but never parent a new MID to
+        // an existing MID. Copy its uniform overrides into a private instance.
+        UMaterialInterface* Parent = Source;
+        while (UMaterialInstanceDynamic* DynamicParent = Cast<UMaterialInstanceDynamic>(Parent))
+        {
+            Parent = DynamicParent->Parent;
+        }
+        if (!IsValid(Parent))
+        {
+            continue;
+        }
+        if (UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Parent, this))
+        {
+            Material->CopyMaterialUniformParameters(Source);
+            Mesh->SetMaterial(CachedStatusMaterialIndex, Material);
+            StatusLightMeshes.Add(Mesh);
+            StatusLightMaterials.Add(Material);
+        }
+    }
+    UpdateStatusLights();
+}
+
+void UMazePuzzleComponent::UpdateStatusLights()
+{
+    const FLinearColor Color = bPuzzleCompleted ? CompletedLightColor : IncompleteLightColor;
+    for (int32 Index = 0; Index < StatusLightMaterials.Num(); ++Index)
+    {
+        UMaterialInstanceDynamic* Material = StatusLightMaterials[Index];
+        UMeshComponent* Mesh = StatusLightMeshes.IsValidIndex(Index) ? StatusLightMeshes[Index].Get() : nullptr;
+        if (IsValid(Material) && IsValid(Mesh) && CachedStatusMaterialIndex >= 0 && CachedStatusMaterialIndex < Mesh->GetNumMaterials())
+        {
+            // Completion owns these tagged indicators, including after a lock update.
+            if (Mesh->GetMaterial(CachedStatusMaterialIndex) != Material)
+            {
+                Mesh->SetMaterial(CachedStatusMaterialIndex, Material);
+            }
+            Material->SetVectorParameterValue(StatusLightColorParameter, Color);
+        }
+    }
+}
+
+void UMazePuzzleComponent::PrepareCompletedExitArea()
+{
+    ClearCompletedExitArea();
+    AActor* Room = GetOwner();
+    if (!IsValid(Room) || CompletedExitAreaTag.IsNone())
+    {
+        return;
+    }
+
+    TArray<UBoxComponent*> Boxes;
+    Room->GetComponents<UBoxComponent>(Boxes);
+    UBoxComponent* Area = nullptr;
+    for (UBoxComponent* Box : Boxes)
+    {
+        if (!IsValid(Box) || (!Box->ComponentHasTag(CompletedExitAreaTag) && Box->GetFName() != CompletedExitAreaTag))
+        {
+            continue;
+        }
+        if (Area || Box->ComponentHasTag(TEXT("MazeBounds")) || Box->ComponentHasTag(TEXT("RoomArrival")) || Box == EnemyEntryTrigger.Get())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Puzzle: Use one whole-room box tagged %s for completion departure; keep it separate from placement, arrival, and enemy-entry boxes."), *CompletedExitAreaTag.ToString());
+            return;
+        }
+        Area = Box;
+    }
+    if (!IsValid(Area))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Puzzle: No whole-room box tagged/named %s; the completed door cannot seal on departure."), *CompletedExitAreaTag.ToString());
+        return;
+    }
+    const FVector Extent = Area->GetUnscaledBoxExtent();
+    if (Extent.ContainsNaN() || Extent.X <= 0.0 || Extent.Y <= 0.0 || Extent.Z <= 0.0
+        || Area->GetCollisionEnabled() == ECollisionEnabled::NoCollision || Area->GetCollisionEnabled() == ECollisionEnabled::PhysicsOnly
+        || !Area->GetGenerateOverlapEvents() || Area->GetCollisionResponseToChannel(ECC_Pawn) != ECR_Overlap)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Puzzle: Completion room area needs nonzero dimensions, query collision, Pawn overlap, and overlap events."));
+        return;
+    }
+
+    // Observe the room's existing area without changing its AI/room-state collision.
+    CompletedExitArea = Area;
+    Area->OnComponentBeginOverlap.AddUniqueDynamic(this, &UMazePuzzleComponent::OnCompletionAreaBeginOverlap);
+    Area->OnComponentEndOverlap.AddUniqueDynamic(this, &UMazePuzzleComponent::OnCompletionAreaEndOverlap);
+    TArray<AActor*> Occupants;
+    Area->GetOverlappingActors(Occupants, APawn::StaticClass());
+    for (AActor* Occupant : Occupants)
+    {
+        OnCompletionAreaBeginOverlap(Area, Occupant, nullptr, INDEX_NONE, false, FHitResult());
+    }
+}
+
+void UMazePuzzleComponent::ClearCompletedExitArea()
+{
+    if (UWorld* World = GetWorld())
+    {
+        World->GetTimerManager().ClearTimer(CompletedExitTimer);
+    }
+    if (UBoxComponent* Area = CompletedExitArea.Get())
+    {
+        Area->OnComponentBeginOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnCompletionAreaBeginOverlap);
+        Area->OnComponentEndOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnCompletionAreaEndOverlap);
+    }
+    CompletedExitArea.Reset();
+    CompletedExitPlayer.Reset();
+    bObservedPlayerInPuzzleArea = false;
+}
+
+void UMazePuzzleComponent::OnCompletionAreaBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+    APawn* Player = Cast<APawn>(OtherActor);
+    if (!bPrepared || bPuzzleDoorSealed || !IsValid(OverlappedComponent) || OverlappedComponent != CompletedExitArea.Get()
+        || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled())
+    {
+        return;
+    }
+    CompletedExitPlayer = Player;
+    bObservedPlayerInPuzzleArea = true;
+    QueueCompletedExitCheck();
+}
+
+void UMazePuzzleComponent::OnCompletionAreaEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex)
+{
+    if (IsValid(OverlappedComponent) && OverlappedComponent == CompletedExitArea.Get()
+        && OverlappedComponent->GetOwner() == GetOwner() && OtherActor == CompletedExitPlayer.Get())
+    {
+        // Wait a frame so multi-component overlap removal can finish first.
+        QueueCompletedExitCheck();
+    }
+}
+
+void UMazePuzzleComponent::QueueCompletedExitCheck()
+{
+    if (UWorld* World = GetWorld())
+    {
+        if (bPuzzleCompleted && !bPuzzleDoorSealed && bObservedPlayerInPuzzleArea && CompletedExitArea.IsValid()
+            && !World->GetTimerManager().IsTimerActive(CompletedExitTimer))
+        {
+            World->GetTimerManager().SetTimer(CompletedExitTimer, this, &UMazePuzzleComponent::CheckCompletedPuzzleExit, 0.05f, false);
+        }
+    }
+}
+
+void UMazePuzzleComponent::CheckCompletedPuzzleExit()
+{
+    UBoxComponent* Area = CompletedExitArea.Get();
+    AMazeActors* Room = Cast<AMazeActors>(GetOwner());
+    if (!bArmed || !bPuzzleCompleted || bPuzzleDoorSealed || !bObservedPlayerInPuzzleArea || !IsValid(Room)
+        || !IsValid(Area) || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze
+        || !MazeGenerator->IsDoorUnlocked(Room, PuzzleDoorTag))
+    {
+        ClearCompletedExitArea();
+        return;
+    }
+    // A disabled trigger must never masquerade as the player leaving the room.
+    if (Area->GetCollisionEnabled() == ECollisionEnabled::NoCollision || Area->GetCollisionEnabled() == ECollisionEnabled::PhysicsOnly
+        || !Area->GetGenerateOverlapEvents() || Area->GetCollisionResponseToChannel(ECC_Pawn) != ECR_Overlap)
+    {
+        ClearCompletedExitArea();
+        return;
+    }
+    APawn* Player = CompletedExitPlayer.Get();
+    if (!IsValid(Player) || !Player->IsPlayerControlled())
+    {
+        CompletedExitPlayer.Reset();
+        bObservedPlayerInPuzzleArea = false;
+        return;
+    }
+    // Any remaining player collision overlap means the doorway is not clear yet.
+    if (Area->IsOverlappingActor(Player))
+    {
+        QueueCompletedExitCheck();
+        return;
+    }
+
+    bPuzzleDoorSealed = true;
+    bPuzzleDoorUnlocked = false;
+    ClearCompletedExitArea();
+    IMazeInterface::Execute_SetMazeDoorLocked(Room, PuzzleDoorTag, true);
+    UpdateStatusLights();
 }
 
 void UMazePuzzleComponent::ClearSpawnedActors()
@@ -590,6 +811,9 @@ void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     bArmed = false;
     SetComponentTickEnabled(false);
     ClearEnemyEntryTrigger();
+    ClearCompletedExitArea();
+    StatusLightMaterials.Reset();
+    StatusLightMeshes.Reset();
     ClearSpawnedActors();
     Super::EndPlay(EndPlayReason);
 }
