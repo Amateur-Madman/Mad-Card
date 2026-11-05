@@ -33,12 +33,16 @@ public:
 
 	void SendKeyboardInput(const TCHAR& InKey);
 	void AllowInputProcessing();
-	void SetPlayerReady(bool bReady) { PlayerReady = bReady; }
 
+	UPROPERTY(BlueprintAssignable, Category = EditDefaultsOnly)
 	FOnInput OnRight;
+
+	UPROPERTY(BlueprintAssignable, Category = EditDefaultsOnly)
 	FOnInput OnWrong;
 
 	bool CanProcessInput = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	bool PlayerReady = false;
 
 	FTimerHandle InputTimer;
@@ -63,6 +67,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	class USentenceWordUnderlined* MainTextWidget;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
+	class AChairForHangman* ChairForHangman;
+
 private:
 	float DrawX = 1920.0f;
 	float DrawY = 1080.0f;
@@ -74,4 +81,9 @@ private:
 
 	UFUNCTION()
 	void HandleLose();
+
+	UFUNCTION()
+	void DeclarePlayerReady() { PlayerReady = true; }
+
+	void FindChairForHangman();
 };

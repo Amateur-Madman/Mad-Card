@@ -2,13 +2,15 @@
 
 
 #include "Actors/WrittingBoard.h"
+#include "Actors/BaseGameMode.h"
+#include "Actors/BasePlayerController.h"
+#include "Actors/ChairForHangman.h"
 #include "Both/SentenceWordUnderlined.h"
 #include "Components/WidgetComponent.h"
 #include "Components/BoxComponent.h"
-#include "Actors/BasePlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
-#include "Actors/BaseGameMode.h"
+#include "EngineUtils.h" 
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -49,9 +51,7 @@ void AWrittingBoard::BeginPlay()
 		CanvasComponent->SetWidgetClass(SentenceWordUnderlinedClass);
 		CanvasComponent->InitWidget();
 
-		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
-
-		if (BaseWidget)
+		if (UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject())
 		{
 			MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
 			if (MainTextWidget)
@@ -59,6 +59,12 @@ void AWrittingBoard::BeginPlay()
 				MainTextWidget->SetupAccordingToDiff();
 				MainTextWidget->OnCompleted.AddDynamic(this, &AWrittingBoard::HandleWin);
 				MainTextWidget->OnFailed.AddDynamic(this, &AWrittingBoard::HandleLose);
+
+				FindChairForHangman();
+				if (ChairForHangman)
+				{
+					ChairForHangman->OnPlayerReady.AddDynamic(this, &AWrittingBoard::DeclarePlayerReady);
+				}
 			}
 		}
 
@@ -95,6 +101,21 @@ void AWrittingBoard::HandleLose()
 	if (ABaseGameMode* GameMode = Cast<ABaseGameMode>(GetWorld()->GetAuthGameMode()))
 	{
 		GameMode->TriggerLose();
+	}
+}
+
+void AWrittingBoard::FindChairForHangman()
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AChairForHangman> It(World); It; ++It)
+		{
+			ChairForHangman = *It;
+			if (ChairForHangman)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Found object name: %s"), *ChairForHangman->GetName());
+			}
+		}
 	}
 }
 
