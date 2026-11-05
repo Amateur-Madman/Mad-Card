@@ -69,7 +69,7 @@ void UPauseMenu::HandleSettingsClicked()
 
 	SettingsMenuInstance->OnClosed.AddDynamic(this, &UPauseMenu::HandleSettingsClosed);
 	SettingsMenuInstance->AddToViewport(10);
-	SetVisibility(ESlateVisibility::Collapsed);
+	
 }
 
 void UPauseMenu::HandleSettingsClosed()
@@ -79,7 +79,7 @@ void UPauseMenu::HandleSettingsClosed()
 		SettingsMenuInstance->OnClosed.RemoveDynamic(this, &UPauseMenu::HandleSettingsClosed);
 	}
 	SettingsMenuInstance = nullptr;
-	SetVisibility(ESlateVisibility::Visible);
+
 }
 
 void UPauseMenu::HandleMainMenuClicked()

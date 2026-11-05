@@ -19,6 +19,7 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	class UWidgetSwitcher* PageSwitcher;
@@ -45,4 +46,6 @@ private:
 	UFUNCTION() void HandleAudioTabClicked();
 	UFUNCTION() void HandleGraphicsTabClicked();
 	UFUNCTION() void HandleBackClicked();
+
+	TMap<TWeakObjectPtr<UUserWidget>, ESlateVisibility> HiddenWidgets;
 };
