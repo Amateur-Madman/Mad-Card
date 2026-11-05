@@ -2,10 +2,10 @@
 
 
 #include "Both/SentenceWordUnderlined.h"
-//#include "Both/CharUnderlined.h"
 #include "Both/WordCharUnderlined.h"
 #include "Components/WrapBox.h"
 #include "Enviornment/MazeSaveSubsystem.h"
+#include "Both/GuessBox.h"
 
 // Randomly choose from an array of strings based on the current difficulty level and set up the widget accordingly
 void USentenceWordUnderlined::SetupAccordingToDiff()
@@ -22,11 +22,13 @@ void USentenceWordUnderlined::SetupAccordingToDiff()
             {
                 RandomIndex = FMath::RandRange(0, HardArray.Num() - 1);
                 Setup(HardArray[RandomIndex]);
+				WrongGuessLimit = HardWrongGuessLimit;
             }
             else
             {
                 RandomIndex = FMath::RandRange(0, EasyArray.Num() - 1);
                 Setup(EasyArray[RandomIndex]);
+				WrongGuessLimit = EasyWrongGuessLimit;
             }
         }
     }
@@ -73,14 +75,44 @@ void USentenceWordUnderlined::AddToLetters(TArray<struct FMadLetter> bMadLetters
     }
 }
 
+bool USentenceWordUnderlined::CheckIfAllLettersRevealed()
+{
+    for (int32 i = 0; i < AllLetters.Num(); i++)
+    {
+        if (AllLetters[i].GetParent()->IsRevealed == false)
+        {
+            return false;
+        }
+	}
+	OnCompleted.Broadcast();
+    return true;
+}
+
 bool USentenceWordUnderlined::CheckInput(TCHAR LetterTyped)
 {
+	ValidInput = false;
+
     for (int32 i = 0; i < AllLetters.Num(); i++)
     {
         if (LetterTyped == FChar::ToLower(AllLetters[i].Char) || LetterTyped == FChar::ToUpper(AllLetters[i].Char))
         {
             AllLetters[i].GetParent()->FillLetter();
+            ValidInput = true;
         }
     }
-    return false;
+    CheckIfAllLettersRevealed();
+
+    if(ValidInput == false)
+    {
+        if(!WrongGuessBox->GuessBox->CheckExistingLetters(LetterTyped))
+        {
+            WrongGuessCount++;
+            if(WrongGuessCount >= WrongGuessLimit)
+            {
+                // Handle reaching the wrong guess limit
+				OnFailed.Broadcast();
+            }
+        }
+    }
+    return ValidInput;
 }

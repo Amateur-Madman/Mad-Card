@@ -42,7 +42,10 @@ public:
 	void FillLetter();
 	void InitializeSpace(TCHAR& bLetter);
 	void NotALetter(TCHAR& bLetter);
+	void Incorrect(TCHAR& bLetter);
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Letter Setup")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Letter Setup")
 	FMadLetter LetterData;
+
+	bool IsRevealed = false;
 };
