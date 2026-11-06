@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimSequenceBase.h"
+#include "TimerManager.h"
 #include "CharacterAnimation.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReload);
@@ -16,94 +18,42 @@ class AM_2610_API UCharacterAnimation : public UAnimInstance
 {
 	GENERATED_BODY()
 
+	// ---------------------------------------------------------------------------
+	// Public API
+	// ---------------------------------------------------------------------------
 public:
 	void NativeThreadSafeUpdateAnimation(float DeltaSeconds) override;
 
-
-
-protected:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Default")
-	float Speed;
-	//set direction
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Default")
-	float Direction;
-	// Set true to fire a test shot from the Animation BP preview window
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
-	bool DebugFire = false;
-	// Animation asset played when firing (assigned in the Animation Blueprint)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
-	class UAnimSequenceBase* FireAsset;
-
-
-	// Slot the action animations plays on
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
-	FName SlotName = "Action";
-	//set true to test hit animation from the Animation BP preview window
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
-	bool DebugHit = false;
-	// Animation asset played when hit (assigned in the Animation Blueprint)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
-	class UAnimSequenceBase* HitAsset;
-
-
-
-
-
-	// Pool of death animations to pick from - C++ picks, Blueprint's Death state just plays whatever ends up in CurrentDeathAsset
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Death")
-	TArray<class UAnimSequenceBase*> DeathAssets;
-
-	// Result of DeathAnimation()'s random pick - read by the AnimGraph's Walking-to-Death transition rule and the Death state's Sequence Player
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Variables|Death")
-	class UAnimSequenceBase* CurrentDeathAsset;
-
-	// Set true to test death animation from the Animation BP preview window
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
-	bool DebugDeath = false;
-
-	// Bound to a timer sized to CurrentDeathAsset's play length - broadcasts OnDeathEnded once it fires
-	UFUNCTION()
-	void HandleDeathEnded();
-
-	// Started in DeathAnimation_Implementation, cleared once HandleDeathEnded fires
-	FTimerHandle DeathEndedTimerHandle;
-
-	// Animation asset played when reloading (assigned in the Animation Blueprint)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
-	class UAnimSequenceBase* ReloadAsset;
-
-
-	//set true to test hit animation from the Animation BP preview window
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
-	bool DebugReload = false;
-	UFUNCTION(BlueprintNativeEvent)
-	void PreviewWindowUpdate();
-	virtual void PreviewWindowUpdate_Implementation();
-
-
-
-public:
-	// Plays the fire animation - left empty in C++ so the Animation Blueprint
-	// can override it with "Play Slot Animation as Dynamic Montage".
-	// Public (unlike PreviewWindowUpdate) because BP_BasePlayer/ABasePlayer
-	// calls this directly on the Animation instance after Attack().
+	// Plays the fire animation on SlotName.
+	// Public because BP_BasePlayer/ABasePlayer calls this directly on the
+	// Animation instance after Attack().
 	UFUNCTION()
 	void FireAnimation();
 
-
+	// Plays the hit animation on SlotName.
 	UFUNCTION()
 	void HitAnimation();
 
+	// Plays the reload animation on SlotName - mirrors FireAnimation/HitAnimation.
+	UFUNCTION()
+	void ReloadAnimation();
 
-	// Renamed from Death to DeathAnimation to match the ABP_CharacterAnimation function name
+	// Picks a random asset from DeathAssets into CurrentDeathAsset and starts the
+	// DeathEndedTimerHandle timer. Name matches the ABP_CharacterAnimation function.
 	UFUNCTION(BlueprintNativeEvent, Category = "Animation")
 	void DeathAnimation();
 	virtual void DeathAnimation_Implementation();
 
-	// Plays the reload animation - mirrors FireAnimation/HitAnimation/DeathAnimation
-	UFUNCTION()
-	void ReloadAnimation();
+	// Plays SitAsset and starts the SitEndedTimerHandle timer.
+	// Name matches the ABP_CharacterAnimation function.
+	UFUNCTION(BlueprintNativeEvent, Category = "Animation")
+	void SitAnimation();
+	virtual void SitAnimation_Implementation();
 
+	// ---------------------------------------------------------------------------
+	// Delegates
+	// ---------------------------------------------------------------------------
+public:
 	UPROPERTY(BlueprintAssignable, Category = "Variables|Weapon")
 	FOnReload OnReloadNow;
 
@@ -115,5 +65,100 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Variables|Death")
 	FOnReload OnDeathEnded;
 
-	
+	// Broadcast once SitAsset has finished playing (timed via SitEndedTimerHandle)
+	UPROPERTY(BlueprintAssignable, Category = "Variables|Sit")
+	FOnReload OnSitEnded;
+
+	// ---------------------------------------------------------------------------
+	// Locomotion
+	// ---------------------------------------------------------------------------
+protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Default")
+	float Speed;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Default")
+	float Direction;
+
+	// ---------------------------------------------------------------------------
+	// Action animations (all play on SlotName)
+	// ---------------------------------------------------------------------------
+protected:
+	// Slot the action animations play on
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
+	FName SlotName = "Action";
+
+	// Animation asset played when firing (assigned in the Animation Blueprint)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
+	UAnimSequenceBase* FireAsset;
+
+	// Animation asset played when hit (assigned in the Animation Blueprint)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
+	UAnimSequenceBase* HitAsset;
+
+	// Animation asset played when reloading (assigned in the Animation Blueprint)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
+	UAnimSequenceBase* ReloadAsset;
+
+	// ---------------------------------------------------------------------------
+	// Death
+	// ---------------------------------------------------------------------------
+protected:
+	// Pool of death animations to pick from - C++ picks, Blueprint's Death state just plays whatever ends up in CurrentDeathAsset
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Death")
+	TArray<UAnimSequenceBase*> DeathAssets;
+
+	// Result of DeathAnimation()'s random pick - read by the AnimGraph's Walking-to-Death transition rule and the Death state's Sequence Player
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Variables|Death")
+	UAnimSequenceBase* CurrentDeathAsset;
+
+	// Bound to a timer sized to CurrentDeathAsset's play length - broadcasts OnDeathEnded once it fires
+	UFUNCTION()
+	void HandleDeathEnded();
+
+	// Started in DeathAnimation_Implementation, cleared once HandleDeathEnded fires
+	FTimerHandle DeathEndedTimerHandle;
+
+	// ---------------------------------------------------------------------------
+	// Sit
+	// ---------------------------------------------------------------------------
+protected:
+	// Animation asset played when sitting (assigned in the Animation Blueprint)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Sit")
+	UAnimSequenceBase* SitAsset;
+
+	// Bound to a timer sized to SitAsset's play length - broadcasts OnSitEnded once it fires
+	UFUNCTION()
+	void HandleSitEnded();
+
+	// Started in SitAnimation_Implementation, cleared once HandleSitEnded fires
+	FTimerHandle SitEndedTimerHandle;
+
+	// ---------------------------------------------------------------------------
+	// Animation BP preview window debugging
+	// ---------------------------------------------------------------------------
+protected:
+	// Called from NativeThreadSafeUpdateAnimation when there is no owning pawn (preview window)
+	UFUNCTION(BlueprintNativeEvent)
+	void PreviewWindowUpdate();
+	virtual void PreviewWindowUpdate_Implementation();
+
+	// Set true to fire a test shot from the Animation BP preview window
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
+	bool DebugFire = false;
+
+	// Set true to test hit animation from the Animation BP preview window
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
+	bool DebugHit = false;
+
+	// Set true to test reload animation from the Animation BP preview window
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
+	bool DebugReload = false;
+
+	// Set true to test death animation from the Animation BP preview window
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
+	bool DebugDeath = false;
+
+	// Set true to test sit animation from the Animation BP preview window
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
+	bool DebugSit = false;
 };

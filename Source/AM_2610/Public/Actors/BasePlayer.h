@@ -159,6 +159,8 @@ protected:
 	virtual void HandleHurt(float Percent) override;
 	virtual void HandleDeath(float Percent) override;
 	UFUNCTION()
+	void HandleSitEnded();
+	UFUNCTION()
 	void HandleAmmoChanged(float Current, float Max);
 #pragma endregion
 

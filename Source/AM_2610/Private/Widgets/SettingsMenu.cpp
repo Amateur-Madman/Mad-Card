@@ -3,7 +3,7 @@
 #include "Components/WidgetSwitcher.h"
 #include "Widgets/GraphicsSettingsPage.h"
 #include "Utility/BaseGameInstance.h"
-
+#include "Blueprint/WidgetBlueprintLibrary.h"
 void USettingsMenu::NativeConstruct()
 {
 	Super::NativeConstruct();
@@ -14,6 +14,26 @@ void USettingsMenu::NativeConstruct()
 	if (BackButton)     BackButton->OnBackgroundButtonClicked.AddDynamic(this, &USettingsMenu::HandleBackClicked);
 
 	if (PageSwitcher) PageSwitcher->SetActiveWidgetIndex(0);
+
+	TArray<UUserWidget*> Found;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(this, Found, UUserWidget::StaticClass(), true);
+	for (UUserWidget* W : Found)
+	{
+		if (W && W != this)
+		{
+			HiddenWidgets.Add(W, W->GetVisibility());
+			W->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+void USettingsMenu::NativeDestruct()
+{
+	for (const TPair<TWeakObjectPtr<UUserWidget>, ESlateVisibility>& Pair : HiddenWidgets)
+	{
+		if (Pair.Key.IsValid()) Pair.Key->SetVisibility(Pair.Value);
+	}
+	HiddenWidgets.Empty();
+	Super::NativeDestruct();
 }
 
 // Tabs are locked while the graphics page is waiting on "keep these settings?"
