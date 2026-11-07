@@ -50,6 +50,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	float InputCooldown = 2.0f;
 
+	void LockInputForDuration(float Duration);
+
+	void LinkToChairForHangman(class AChairForHangman* InChair) { ChairForHangman = InChair; }
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
@@ -67,7 +71,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	class USentenceWordUnderlined* MainTextWidget;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	class AChairForHangman* ChairForHangman;
 
 private:
@@ -84,6 +87,4 @@ private:
 
 	UFUNCTION()
 	void DeclarePlayerReady() { PlayerReady = true; }
-
-	void FindChairForHangman();
 };

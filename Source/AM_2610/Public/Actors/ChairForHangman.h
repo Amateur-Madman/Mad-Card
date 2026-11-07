@@ -21,6 +21,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnPlayerReady OnPlayerReady;
 
+	void LinkToWrittingBoard(class AWrittingBoard* InWrittingBoard) { WrittingBoard = InWrittingBoard; }
+
 protected:
 	virtual void HandlePickup(AActor* OtherActor, const FHitResult& SweepResult) override;
 	virtual void BeginPlay() override;

@@ -3,12 +3,21 @@
 
 #include "Actors/ChairForHangman.h"
 #include "Actors/BasePlayer.h"
+#include "Actors/BasePlayerController.h"
 #include "Actors/WrittingBoard.h"
-#include "EngineUtils.h" 
+#include "EngineUtils.h"
+#include "Both/CharacterAnimation.h" 
+#include "GameFramework/GameStateBase.h"
 
 AChairForHangman::AChairForHangman()
 {
 	bRequiresInteract = true;
+
+    ChildActorComponent = CreateDefaultSubobject<UChildActorComponent>(TEXT("ChildActorComponent"));
+    if (ChildActorComponent)
+    {
+        ChildActorComponent->SetupAttachment(GetRootComponent());
+    }
 }
 
 void AChairForHangman::HandlePickup(AActor* OtherActor, const FHitResult& SweepResult)
@@ -22,6 +31,10 @@ void AChairForHangman::HandlePickup(AActor* OtherActor, const FHitResult& SweepR
             if(WrittingBoard)
             {
                 OtherCharacter->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, 0.0f));
+                if(UCharacterAnimation* OtherCharacterAnim = Cast<UCharacterAnimation>(OtherCharacter->GetMesh()->GetAnimInstance()))
+                {
+                    OtherCharacterAnim->SitAnimation();
+				}
 			}
 		}
 	}
@@ -31,26 +44,22 @@ void AChairForHangman::BeginPlay()
 {
 	Super::BeginPlay();
 
-	FindWrittingBoard();
+    if (UWorld* World = GetWorld())
+    {
+        if (AGameStateBase* GameState = World->GetGameState())
+        {
+            if (ABasePlayerController* PC = Cast<ABasePlayerController>(GameState->GetGameInstance()->GetFirstLocalPlayerController(World)))
+            {
+                if (ABasePlayer* MyChar = Cast<ABasePlayer>(PC->GetPawn()))
+                {
+                    MyChar->RegisterChair(this);
+                }
+            }
+        }
+    }
 }
 
 void AChairForHangman::PostPickup()
 {
-    //Empty; Do nothing when "picked up"
-}
-
-void AChairForHangman::FindWrittingBoard()
-{
-    if (UWorld* World = GetWorld())
-    {
-        for (TActorIterator<AWrittingBoard> It(World); It; ++It)
-        {
-            WrittingBoard = *It;
-
-            if (WrittingBoard)
-            {
-                UE_LOG(LogTemp, Log, TEXT("Found object name: %s"), *WrittingBoard->GetName());
-            }
-        }
-    }
+    //Empty; Do nothing after "picked up"
 }

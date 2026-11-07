@@ -3,6 +3,7 @@
 
 #include "Actors/WrittingBoard.h"
 #include "Actors/BaseGameMode.h"
+#include "Actors/BasePlayer.h"
 #include "Actors/BasePlayerController.h"
 #include "Actors/ChairForHangman.h"
 #include "Both/SentenceWordUnderlined.h"
@@ -11,6 +12,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "EngineUtils.h" 
+#include "GameFramework/GameStateBase.h"
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -46,6 +48,20 @@ void AWrittingBoard::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (UWorld* World = GetWorld())
+	{
+		if (AGameStateBase* GameState = World->GetGameState())
+		{
+			if (ABasePlayerController* PC = Cast<ABasePlayerController>(GameState->GetGameInstance()->GetFirstLocalPlayerController(World)))
+			{
+				if (ABasePlayer* MyChar = Cast<ABasePlayer>(PC->GetPawn()))
+				{
+					MyChar->RegisterBoard(this);
+				}
+			}
+		}
+	}
+
 	if (CanvasComponent)
 	{
 		CanvasComponent->SetWidgetClass(SentenceWordUnderlinedClass);
@@ -60,7 +76,6 @@ void AWrittingBoard::BeginPlay()
 				MainTextWidget->OnCompleted.AddDynamic(this, &AWrittingBoard::HandleWin);
 				MainTextWidget->OnFailed.AddDynamic(this, &AWrittingBoard::HandleLose);
 
-				FindChairForHangman();
 				if (ChairForHangman)
 				{
 					ChairForHangman->OnPlayerReady.AddDynamic(this, &AWrittingBoard::DeclarePlayerReady);
@@ -104,19 +119,15 @@ void AWrittingBoard::HandleLose()
 	}
 }
 
-void AWrittingBoard::FindChairForHangman()
+void AWrittingBoard::LockInputForDuration(float Duration)
 {
-	if (UWorld* World = GetWorld())
-	{
-		for (TActorIterator<AChairForHangman> It(World); It; ++It)
-		{
-			ChairForHangman = *It;
-			if (ChairForHangman)
-			{
-				UE_LOG(LogTemp, Log, TEXT("Found object name: %s"), *ChairForHangman->GetName());
-			}
-		}
-	}
+	CanProcessInput = false;
+	GetWorld()->GetTimerManager().SetTimer(
+		InputTimer,
+		this,
+		&AWrittingBoard::AllowInputProcessing,
+		Duration,
+		false);
 }
 
 void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
@@ -153,17 +164,12 @@ bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, con
 			if (PressedKey == EKeys::W || PressedKey == EKeys::A || PressedKey == EKeys::S || PressedKey == EKeys::D)
 			{
 				TargetBoard->SendKeyboardInput(Letter);
+				TargetBoard->LockInputForDuration(TargetBoard->InputCooldown);
 				return false;
 			}
 			TargetBoard->SendKeyboardInput(Letter);
+			TargetBoard->LockInputForDuration(TargetBoard->InputCooldown);
 		}
-		TargetBoard->CanProcessInput = false;
-		TargetBoard->GetWorld()->GetTimerManager().SetTimer(
-			TargetBoard->InputTimer,
-			TargetBoard, 
-			&AWrittingBoard::AllowInputProcessing, 
-			TargetBoard->InputCooldown, 
-			false);
 	}
 	return false;
 }

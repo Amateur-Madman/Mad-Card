@@ -2,6 +2,8 @@
 
 
 #include "Both/CharacterAnimation.h"
+#include "Actors/ChairForHangman.h"
+#include "Actors/BasePlayer.h"
 #include "KismetAnimationLibrary.h"
 #include "../AM_2610.h"
 
@@ -34,6 +36,19 @@ void UCharacterAnimation::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 // ---------------------------------------------------------------------------
 // Preview window debugging
 // ---------------------------------------------------------------------------
+
+void UCharacterAnimation::NativeInitializeAnimation()
+{
+	Super::NativeInitializeAnimation();
+
+	if(ABasePlayer* Player = Cast<ABasePlayer>(TryGetPawnOwner()))
+	{
+		if(Player->ChairForHangman)
+		{
+			Player->ChairForHangman->OnPlayerReady.AddDynamic(this, &UCharacterAnimation::DeclareSitting);
+		}
+	}
+}
 
 void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 {
@@ -132,14 +147,4 @@ void UCharacterAnimation::SitAnimation_Implementation()
 	}
 
 	PlaySlotAnimationAsDynamicMontage(SitAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(SitEndedTimerHandle, this, &UCharacterAnimation::HandleSitEnded, SitAsset->GetPlayLength(), false);
-	}
-}
-
-void UCharacterAnimation::HandleSitEnded()
-{
-	OnSitEnded.Broadcast();
 }
