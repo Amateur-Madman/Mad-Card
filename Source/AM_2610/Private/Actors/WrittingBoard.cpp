@@ -2,13 +2,17 @@
 
 
 #include "Actors/WrittingBoard.h"
+#include "Actors/BaseGameMode.h"
+#include "Actors/BasePlayer.h"
+#include "Actors/BasePlayerController.h"
+#include "Actors/ChairForHangman.h"
 #include "Both/SentenceWordUnderlined.h"
 #include "Components/WidgetComponent.h"
 #include "Components/BoxComponent.h"
-#include "Actors/BasePlayerController.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
-#include "Actors/BaseGameMode.h"
+#include "EngineUtils.h" 
+#include "GameFramework/GameStateBase.h"
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -44,14 +48,26 @@ void AWrittingBoard::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (UWorld* World = GetWorld())
+	{
+		if (AGameStateBase* GameState = World->GetGameState())
+		{
+			if (ABasePlayerController* PC = Cast<ABasePlayerController>(GameState->GetGameInstance()->GetFirstLocalPlayerController(World)))
+			{
+				if (ABasePlayer* MyChar = Cast<ABasePlayer>(PC->GetPawn()))
+				{
+					MyChar->RegisterBoard(this);
+				}
+			}
+		}
+	}
+
 	if (CanvasComponent)
 	{
 		CanvasComponent->SetWidgetClass(SentenceWordUnderlinedClass);
 		CanvasComponent->InitWidget();
 
-		UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject();
-
-		if (BaseWidget)
+		if (UUserWidget* BaseWidget = CanvasComponent->GetUserWidgetObject())
 		{
 			MainTextWidget = Cast<USentenceWordUnderlined>(BaseWidget);
 			if (MainTextWidget)
@@ -59,6 +75,11 @@ void AWrittingBoard::BeginPlay()
 				MainTextWidget->SetupAccordingToDiff();
 				MainTextWidget->OnCompleted.AddDynamic(this, &AWrittingBoard::HandleWin);
 				MainTextWidget->OnFailed.AddDynamic(this, &AWrittingBoard::HandleLose);
+
+				if (ChairForHangman)
+				{
+					ChairForHangman->OnPlayerReady.AddDynamic(this, &AWrittingBoard::DeclarePlayerReady);
+				}
 			}
 		}
 
@@ -98,6 +119,17 @@ void AWrittingBoard::HandleLose()
 	}
 }
 
+void AWrittingBoard::LockInputForDuration(float Duration)
+{
+	CanProcessInput = false;
+	GetWorld()->GetTimerManager().SetTimer(
+		InputTimer,
+		this,
+		&AWrittingBoard::AllowInputProcessing,
+		Duration,
+		false);
+}
+
 void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
 {
 	if (MainTextWidget)
@@ -132,17 +164,12 @@ bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, con
 			if (PressedKey == EKeys::W || PressedKey == EKeys::A || PressedKey == EKeys::S || PressedKey == EKeys::D)
 			{
 				TargetBoard->SendKeyboardInput(Letter);
+				TargetBoard->LockInputForDuration(TargetBoard->InputCooldown);
 				return false;
 			}
 			TargetBoard->SendKeyboardInput(Letter);
+			TargetBoard->LockInputForDuration(TargetBoard->InputCooldown);
 		}
-		TargetBoard->CanProcessInput = false;
-		TargetBoard->GetWorld()->GetTimerManager().SetTimer(
-			TargetBoard->InputTimer,
-			TargetBoard, 
-			&AWrittingBoard::AllowInputProcessing, 
-			TargetBoard->InputCooldown, 
-			false);
 	}
 	return false;
 }

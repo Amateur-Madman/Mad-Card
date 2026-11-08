@@ -21,6 +21,8 @@
 #include "Audio/PlayerAudioComponent.h"
 #include "Utility/AITargetStack.h"
 #include "../AM_2610.h"
+#include "Actors/WrittingBoard.h"
+#include "Actors/ChairForHangman.h"
 
 
 
@@ -191,6 +193,30 @@ void ABasePlayer::Tick(float DeltaTime)
 	const FRotator Desired = (AimPoint - Camera->GetComponentLocation()).Rotation();
 	ThePlayerController->SetControlRotation(
 		FMath::RInterpTo(ThePlayerController->GetControlRotation(), Desired, DeltaTime, ViewLockSpeed));
+}
+
+void ABasePlayer::RegisterBoard(class AWrittingBoard* Board)
+{
+	WrittingBoard = Board;
+	TryLinkActors();
+}
+
+void ABasePlayer::RegisterChair(class AChairForHangman* Chair)
+{
+	ChairForHangman = Chair;
+	TryLinkActors();
+}
+
+void ABasePlayer::TryLinkActors()
+{
+	if(ChairForHangman && WrittingBoard)
+	{
+		ChairForHangman->LinkToWrittingBoard(WrittingBoard);
+		WrittingBoard->LinkToChairForHangman(ChairForHangman);
+
+		//ChairForHangman = nullptr;
+		WrittingBoard = nullptr;
+	}
 }
 
 void ABasePlayer::BeginPlay()

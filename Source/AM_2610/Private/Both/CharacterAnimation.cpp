@@ -2,8 +2,14 @@
 
 
 #include "Both/CharacterAnimation.h"
+#include "Actors/ChairForHangman.h"
+#include "Actors/BasePlayer.h"
 #include "KismetAnimationLibrary.h"
 #include "../AM_2610.h"
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
 
 void UCharacterAnimation::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 {
@@ -27,6 +33,23 @@ void UCharacterAnimation::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Preview window debugging
+// ---------------------------------------------------------------------------
+
+void UCharacterAnimation::NativeInitializeAnimation()
+{
+	Super::NativeInitializeAnimation();
+
+	if(ABasePlayer* Player = Cast<ABasePlayer>(TryGetPawnOwner()))
+	{
+		if(Player->ChairForHangman)
+		{
+			Player->ChairForHangman->OnPlayerReady.AddDynamic(this, &UCharacterAnimation::DeclareSitting);
+		}
+	}
+}
+
 void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 {
 	if (DebugFire)
@@ -41,23 +64,42 @@ void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 		DebugHit = false;
 	}
 
+	if (DebugReload)
+	{
+		ReloadAnimation();
+		DebugReload = false;
+	}
+
 	if (DebugDeath)
 	{
 		DeathAnimation();
 		DebugDeath = false;
 	}
-	if (DebugReload)
-	{
-		ReloadAnimation();
-		DebugReload = false;
-	} 
 }
+
+// ---------------------------------------------------------------------------
+// Action animations
+// ---------------------------------------------------------------------------
+
 void UCharacterAnimation::FireAnimation()
 {
 	PlaySlotAnimationAsDynamicMontage(FireAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
 }
 
+void UCharacterAnimation::HitAnimation()
+{
+	PlaySlotAnimationAsDynamicMontage(HitAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
+	UE_LOG(LogTemp, Warning, TEXT("Hit Animation Played"));
+}
 
+void UCharacterAnimation::ReloadAnimation()
+{
+	PlaySlotAnimationAsDynamicMontage(ReloadAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Death
+// ---------------------------------------------------------------------------
 
 void UCharacterAnimation::DeathAnimation_Implementation()
 {
@@ -80,16 +122,30 @@ void UCharacterAnimation::DeathAnimation_Implementation()
 		World->GetTimerManager().SetTimer(DeathEndedTimerHandle, this, &UCharacterAnimation::HandleDeathEnded, CurrentDeathAsset->GetPlayLength(), false);
 	}
 }
+
 void UCharacterAnimation::HandleDeathEnded()
 {
 	OnDeathEnded.Broadcast();
 }
-void UCharacterAnimation::HitAnimation()
+
+// ---------------------------------------------------------------------------
+// Sit
+// ---------------------------------------------------------------------------
+
+void UCharacterAnimation::SitAnimation()
 {
-	PlaySlotAnimationAsDynamicMontage(HitAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
-	UE_LOG(LogTemp, Warning, TEXT("Hit Animation Played"));
-}
-void UCharacterAnimation::ReloadAnimation()
-{
-	PlaySlotAnimationAsDynamicMontage(ReloadAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
+	if (!SitAsset)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SitAnimation: SitAsset is not set, cannot play sit animation"));
+		return;
+	}
+
+	UAnimMontage* AnimReturn = PlaySlotAnimationAsDynamicMontage(SitAsset, FullBodySlot);
+
+	UE_LOG(LogTemp, Warning, TEXT("SitDebug | Return: %s | Slot: %s | Length: %.2f | AssetSkel: %s | MySkel: %s"),
+		AnimReturn ? *AnimReturn->GetName() : TEXT("NULLPTR"),
+		*FullBodySlot.ToString(),
+		SitAsset->GetPlayLength(),
+		*GetNameSafe(SitAsset->GetSkeleton()),
+		*GetNameSafe(CurrentSkeleton));
 }

@@ -35,6 +35,13 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = Default)
 	class UCharacterAnimation* CharacterAnimation;
 
+	//Difficulty Speeds
+	float EasySpeed;
+	float HardSpeed;
+
+	void SetDifficultySpeeds(float InEasySpeed, float InHardSpeed) { EasySpeed = InEasySpeed; HardSpeed = InHardSpeed; }
+	void SpeedAccordingToDiff();
+
 	// Overlay material used while revealed (MI_Scan_Test). Set per enemy Blueprint.
 	UPROPERTY(EditDefaultsOnly, Category = "Scan")
 	TObjectPtr<UMaterialInterface> ScanOverlayMaterial;

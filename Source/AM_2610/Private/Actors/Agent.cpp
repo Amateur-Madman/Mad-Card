@@ -6,7 +6,8 @@
 #include "Both/CharacterAnimation.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
-#include "../AM_2610.h"
+#include "Enviornment/MazeSaveSubsystem.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 AAgent::AAgent()
 {
@@ -24,13 +25,22 @@ AAgent::AAgent()
 		ProximitySphere->SetupAttachment(GetRootComponent());
 	}
 
-	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.f, 0.0f));
-	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+	if(GetMesh())
+	{
+		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.f, 0.0f));
+		GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+	}
 }
 
 void AAgent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if(HardSpeed && EasySpeed)
+	{
+		SetDifficultySpeeds(EasySpeed, HardSpeed);
+		SpeedAccordingToDiff();
+	}
 
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 	if(AnimInstance)
@@ -57,6 +67,26 @@ void AAgent::ScanRevealed_Implementation(float Duration)
 
 	// Calling SetTimer on an active handle resets it, so a second scan extends the reveal
 	GetWorldTimerManager().SetTimer(ScanEndTimer, this, &AAgent::EndScan, Duration, false);
+}
+
+void AAgent::SpeedAccordingToDiff()
+{
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		UMazeSaveSubsystem* SaveSubsystem = GameInstance->GetSubsystem<UMazeSaveSubsystem>();
+
+		if (SaveSubsystem)
+		{
+			if (SaveSubsystem->GetDifficulty() == EMazeDifficulty::Hard)
+			{
+				GetCharacterMovement()->MaxWalkSpeed = HardSpeed;
+			}
+			else
+			{
+				GetCharacterMovement()->MaxWalkSpeed = EasySpeed;
+			}
+		}
+	}
 }
 
 void AAgent::EndScan()

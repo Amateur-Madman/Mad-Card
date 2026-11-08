@@ -136,15 +136,21 @@ void UMainMenu::HandleQuitClicked()
 
 void UMainMenu::HandleSettingsClicked()
 {
-	if (!SettingsMenuClass) return;
+	if (IsValid(SettingsMenuInstance)) return;
+	if (!SettingsMenuClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMainMenu: SettingsMenuClass not set"));
+		return;
+	}
 
 	SettingsMenuInstance = CreateWidget<USettingsMenu>(GetOwningPlayer(), SettingsMenuClass);
 	if (!SettingsMenuInstance) return;
 
 	SettingsMenuInstance->OnClosed.AddDynamic(this, &UMainMenu::HandleSettingsClosed);
 	SettingsMenuInstance->AddToViewport(10);
-	SetVisibility(ESlateVisibility::Collapsed);
+	
 }
+
 
 void UMainMenu::HandleSettingsClosed()
 {
@@ -153,5 +159,5 @@ void UMainMenu::HandleSettingsClosed()
 		SettingsMenuInstance->OnClosed.RemoveDynamic(this, &UMainMenu::HandleSettingsClosed);
 	}
 	SettingsMenuInstance = nullptr;
-	SetVisibility(ESlateVisibility::Visible);
+	
 }

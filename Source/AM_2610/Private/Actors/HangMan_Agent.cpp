@@ -102,14 +102,6 @@ void AHangMan_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedComp
 			CaughtPlayer = OtherCharacter;
 			CaughtPlayer->SetActorLocation(ChildActorComponent->GetComponentLocation());
 			OtherCharacter->BeginViewLock(this, FVector(0.0f, 0.0f, 60.0f));
-			//OtherCharacter->GetCharacterMovement()->DisableMovement();
-			//OtherCharacter->Camera->SetActorRelativeRotation(ChildActorComponent->GetComponentRotation());
-			//if (APlayerController* PlayerController = Cast<APlayerController>(OtherCharacter->GetController()))
-			//{
-			//	PlayerController->SetIgnoreMoveInput(true);
-			//	//PlayerController->SetIgnoreLookInput(true);
-			//	//PlayerController->PlayerCameraManager->SetActorRelativeRotation(ChildActorComponent->GetComponentRotation());
-			//}
 			ProximitySphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 	}

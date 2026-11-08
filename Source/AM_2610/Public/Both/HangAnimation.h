@@ -86,12 +86,12 @@ private:
 	UFUNCTION()
 	void AnimHang();
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION()
 	void LeaveGround();
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION()
 	void LeaveCeiling();
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION()
 	void AnimAttack();
 };

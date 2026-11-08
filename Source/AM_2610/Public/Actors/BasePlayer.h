@@ -223,4 +223,19 @@ private:
 	FVector ViewLockOffset = FVector::ZeroVector;
 	float ViewLockSpeed = 6.f;
 #pragma endregion
+
+#pragma region BoardAndChair
+public:
+	UPROPERTY()
+	class AChairForHangman* ChairForHangman;
+
+	UPROPERTY()
+	class AWrittingBoard* WrittingBoard;
+
+	void RegisterBoard(class AWrittingBoard* Board);
+	void RegisterChair(class AChairForHangman* Chair);
+
+private:
+	void TryLinkActors();
+#pragma endregion
 };
