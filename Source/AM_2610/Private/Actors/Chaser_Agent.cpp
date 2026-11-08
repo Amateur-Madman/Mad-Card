@@ -6,18 +6,19 @@
 #include "Actors/BaseGameMode.h"
 #include "Actors/BasePlayer.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "../AM_2610.h"
 
 
 void AChaser_Agent::BeginPlay()
 {
+	HardSpeed = 60.0f;
+	EasySpeed = 20.0f;
+
 	Super::BeginPlay();
 
 	if (ProximitySphere)
 	{
 		ProximitySphere->OnComponentBeginOverlap.AddDynamic(this, &AChaser_Agent::OnProximityOverlapBegin);
 	}
-	GetCharacterMovement()->MaxWalkSpeed = 20.0f;
 }
 
 void AChaser_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
@@ -33,23 +34,3 @@ void AChaser_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedCompo
 		}
 	}
 }
-
-//void AChaser_Agent::PlayerRoomStateChanged(AActor* Player, bool bIsInRoom)
-//{
-//	if (bIsInRoom)
-//	{
-//		// Player entered the room, start chasing
-//		if (GetCharacterMovement())
-//		{
-//			GetCharacterMovement()->MaxWalkSpeed = 600.0f; // Set chase speed
-//		}
-//	}
-//	else
-//	{
-//		// Player left the room, stop chasing
-//		if (GetCharacterMovement())
-//		{
-//			GetCharacterMovement()->MaxWalkSpeed = 300.0f; // Set normal speed
-//		}
-//	}
-//}
