@@ -48,7 +48,7 @@ public:
 	FTimerHandle InputTimer;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	float InputCooldown = 2.0f;
+	float InputCooldown = 1.0f;
 
 	void LockInputForDuration(float Duration);
 

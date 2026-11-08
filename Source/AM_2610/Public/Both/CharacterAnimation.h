@@ -44,11 +44,9 @@ public:
 	void DeathAnimation();
 	virtual void DeathAnimation_Implementation();
 
-	// Plays SitAsset and starts the SitEndedTimerHandle timer.
-	// Name matches the ABP_CharacterAnimation function.
-	UFUNCTION(BlueprintNativeEvent, Category = "Animation")
+	// Plays SitAsset
+	UFUNCTION()
 	void SitAnimation();
-	virtual void SitAnimation_Implementation();
 
 	// ---------------------------------------------------------------------------
 	// Delegates
@@ -82,6 +80,10 @@ protected:
 	// Slot the action animations play on
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
 	FName SlotName = "Action";
+
+	//Slot for 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
+	FName FullBodySlot = "FullBody";
 
 	// Animation asset played when firing (assigned in the Animation Blueprint)
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Variables|Weapon")
@@ -153,8 +155,4 @@ protected:
 	// Set true to test death animation from the Animation BP preview window
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
 	bool DebugDeath = false;
-
-	// Set true to test sit animation from the Animation BP preview window
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Variables|Debug")
-	bool DebugSit = false;
 };

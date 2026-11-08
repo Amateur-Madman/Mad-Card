@@ -24,8 +24,11 @@ AAgent::AAgent()
 		ProximitySphere->SetupAttachment(GetRootComponent());
 	}
 
-	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.f, 0.0f));
-	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+	if(GetMesh())
+	{
+		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.f, 0.0f));
+		GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, -90.0f));
+	}
 }
 
 void AAgent::BeginPlay()

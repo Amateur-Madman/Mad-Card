@@ -75,12 +75,6 @@ void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 		DeathAnimation();
 		DebugDeath = false;
 	}
-
-	if (DebugSit)
-	{
-		SitAnimation();
-		DebugSit = false;
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +132,7 @@ void UCharacterAnimation::HandleDeathEnded()
 // Sit
 // ---------------------------------------------------------------------------
 
-void UCharacterAnimation::SitAnimation_Implementation()
+void UCharacterAnimation::SitAnimation()
 {
 	if (!SitAsset)
 	{
@@ -146,5 +140,12 @@ void UCharacterAnimation::SitAnimation_Implementation()
 		return;
 	}
 
-	PlaySlotAnimationAsDynamicMontage(SitAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
+	UAnimMontage* AnimReturn = PlaySlotAnimationAsDynamicMontage(SitAsset, FullBodySlot);
+
+	UE_LOG(LogTemp, Warning, TEXT("SitDebug | Return: %s | Slot: %s | Length: %.2f | AssetSkel: %s | MySkel: %s"),
+		AnimReturn ? *AnimReturn->GetName() : TEXT("NULLPTR"),
+		*FullBodySlot.ToString(),
+		SitAsset->GetPlayLength(),
+		*GetNameSafe(SitAsset->GetSkeleton()),
+		*GetNameSafe(CurrentSkeleton));
 }

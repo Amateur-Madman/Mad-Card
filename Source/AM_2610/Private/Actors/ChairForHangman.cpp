@@ -8,6 +8,8 @@
 #include "EngineUtils.h"
 #include "Both/CharacterAnimation.h" 
 #include "GameFramework/GameStateBase.h"
+#include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
 
 AChairForHangman::AChairForHangman()
 {
@@ -33,9 +35,12 @@ void AChairForHangman::HandlePickup(AActor* OtherActor, const FHitResult& SweepR
                 OtherCharacter->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, 0.0f));
                 if(UCharacterAnimation* OtherCharacterAnim = Cast<UCharacterAnimation>(OtherCharacter->GetMesh()->GetAnimInstance()))
                 {
+                    //OtherCharacter->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
                     OtherCharacterAnim->SitAnimation();
+					OnPlayerReady.Broadcast();
 				}
 			}
+			BoxCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 	}
 }

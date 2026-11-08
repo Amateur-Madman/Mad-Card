@@ -21,6 +21,8 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnPlayerReady OnPlayerReady;
 
+	class AWrittingBoard* WrittingBoard;
+
 	void LinkToWrittingBoard(class AWrittingBoard* InWrittingBoard) { WrittingBoard = InWrittingBoard; }
 
 protected:
@@ -33,8 +35,4 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class ABasePlayer* CaughtPlayer;
-
-	class AWrittingBoard* WrittingBoard;
-private:
-	void FindWrittingBoard();
 };
