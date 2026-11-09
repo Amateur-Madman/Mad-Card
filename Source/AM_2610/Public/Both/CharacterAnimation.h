@@ -63,6 +63,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Variables|Death")
 	FOnReload OnDeathEnded;
 
+	// Broadcast once SitAsset has finished playing (timed via SitEndedTimerHandle)
+	UPROPERTY(BlueprintAssignable, Category = "Variables|Sit")
+	FOnReload OnSitEnded;
+
 	// ---------------------------------------------------------------------------
 	// Locomotion
 	// ---------------------------------------------------------------------------
@@ -128,9 +132,9 @@ protected:
 	bool IsSitting = false;
 
 	UFUNCTION()
-	void DeclareSitting() { IsSitting = true; };
+	void HandleSitEnded();
 
-	virtual void NativeInitializeAnimation() override;
+	FTimerHandle SitEndedTimerHandle;
 	// ---------------------------------------------------------------------------
 	// Animation BP preview window debugging
 	// ---------------------------------------------------------------------------
