@@ -7,13 +7,47 @@
 #include "Enviornment/MazePuzzleButton.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/MeshComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
 #include "NavigationData.h"
 #include "NavigationSystem.h"
+
+namespace
+{
+    bool IsPlayerFullyInsideRoomArea(const UBoxComponent& Area, const APawn& Player)
+    {
+        const FTransform& Transform = Area.GetComponentTransform();
+        FVector Center;
+        FVector Extent;
+        if (const UCapsuleComponent* Capsule = Cast<UCapsuleComponent>(Player.GetRootComponent()))
+        {
+            Center = Capsule->GetComponentLocation();
+            float Radius;
+            float HalfHeight;
+            Capsule->GetScaledCapsuleSize(Radius, HalfHeight);
+            const FVector Up = Transform.InverseTransformVectorNoScale(Capsule->GetUpVector());
+            Extent = FVector(Radius) + Up.GetAbs() * FMath::Max(0.0f, HalfHeight - Radius);
+        }
+        else
+        {
+            FVector WorldExtent;
+            Player.GetActorBounds(true, Center, WorldExtent);
+            Extent = FVector(
+                FVector::DotProduct(WorldExtent, Area.GetForwardVector().GetAbs()),
+                FVector::DotProduct(WorldExtent, Area.GetRightVector().GetAbs()),
+                FVector::DotProduct(WorldExtent, Area.GetUpVector().GetAbs()));
+        }
+
+        const FVector Farthest = Transform.InverseTransformPositionNoScale(Center).GetAbs() + Extent;
+        const FVector BoxExtent = Area.GetScaledBoxExtent();
+        return Farthest.X <= BoxExtent.X && Farthest.Y <= BoxExtent.Y && Farthest.Z <= BoxExtent.Z;
+    }
+}
 
 UMazePuzzleComponent::UMazePuzzleComponent()
 {
@@ -369,12 +403,12 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
 {
     APawn* Player = Cast<APawn>(OtherActor);
 
-    if (!bArmed || !bWaitingForEnemyEntry || !IsValid(OverlappedComponent) || OverlappedComponent != EnemyEntryTrigger.Get() || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    if (!bArmed || bPuzzleCompleted || CompletedExitArea.IsValid() || !bWaitingForEnemyEntry || !IsValid(OverlappedComponent) || OverlappedComponent != EnemyEntryTrigger.Get() || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
         return;
     }
 
-    // Latch before spawning; additional player components and re-entry cannot duplicate it.
+    // Record the entry before spawning so extra overlaps cannot start it twice.
     bWaitingForEnemyEntry = false;
     bEnemySpawningPending = true;
     EnemySpawnRetryRemaining = 0.0f;
@@ -383,7 +417,7 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
     Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap);
     Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-    // Keep the pressure-room door and console behavior when entry starts the Angels.
+    // Start the pressure plate puzzle when the player enters.
     if (bUsePressureButtons && !bPuzzleStarted)
     {
         BeginPuzzle(Player);
@@ -443,8 +477,11 @@ void UMazePuzzleComponent::ArmPuzzle()
     // A validated entry trigger counts as ready while its Angels wait for the player.
     const bool bEnemiesReady = bWaitingForEnemyEntry || bEnemySpawningPending || (bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount);
     bArmed = bPrepared && (!bUsePressureButtons || SpawnedButtons.Num() == 2) && bEnemiesReady;
-    SetComponentTickEnabled(bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked)));
-    EnableEnemyEntryTrigger();
+    SetComponentTickEnabled(bArmed && (CompletedExitArea.IsValid() || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked)));
+    if (!CompletedExitArea.IsValid())
+    {
+        EnableEnemyEntryTrigger();
+    }
 }
 
 bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
@@ -454,13 +491,22 @@ bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
         return false;
     }
 
-    // Lock once on entry. Extra overlaps and later re-entry do not reset it.
+    const UBoxComponent* Area = CompletedExitArea.Get();
+    if (Area && (!Area->K2_IsQueryCollisionEnabled() || !IsPlayerFullyInsideRoomArea(*Area, *Player)))
+    {
+        return false;
+    }
+
+    const bool bTurnConsoleRed = !bButtonsUnlocked && !bConsoleRed;
     bPuzzleStarted = true;
     bPuzzleDoorUnlocked = false;
-    bConsoleRed = true;
+    bConsoleRed = !bButtonsUnlocked;
     IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
     UpdateStatusLights();
-    OnConsoleStateChanged.Broadcast(true);
+    if (bTurnConsoleRed)
+    {
+        OnConsoleStateChanged.Broadcast(true);
+    }
     SetComponentTickEnabled(true);
     return true;
 }
@@ -511,11 +557,19 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    const UBoxComponent* Area = CompletedExitArea.Get();
+    const bool bWatchRoom = bArmed && !bPuzzleCompleted && Area && MazeGenerator.IsValid()
+        && MazeGenerator->LoopState == EMazeLoopState::TraversingMaze;
+    if (bWatchRoom && !UpdateRoomVisit(*Area))
+    {
+        return;
+    }
+
     AdvanceEntryEnemySpawning(DeltaTime);
 
     if (!bArmed || !bPuzzleStarted || bButtonsUnlocked || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || SpawnedButtons.Num() != 2 || !IsValid(SpawnedButtons[0]) || !IsValid(SpawnedButtons[1]))
     {
-        if (!bEnemySpawningPending)
+        if (!bWatchRoom && !bEnemySpawningPending)
         {
             SetComponentTickEnabled(false);
         }
@@ -536,10 +590,75 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         // Turn the console blue, but keep the door locked until it is used.
         bButtonsUnlocked = true;
         bConsoleRed = false;
-        SetComponentTickEnabled(bEnemySpawningPending);
+        SetComponentTickEnabled(bWatchRoom || bEnemySpawningPending);
         OnConsoleStateChanged.Broadcast(false);
         OnButtonsUnlocked.Broadcast();
     }
+}
+
+bool UMazePuzzleComponent::UpdateRoomVisit(const UBoxComponent& Area)
+{
+    if (!Area.K2_IsQueryCollisionEnabled() || !Area.GetGenerateOverlapEvents()
+        || Area.GetCollisionResponseToChannel(ECC_Pawn) != ECR_Overlap)
+    {
+        return false;
+    }
+
+    APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
+    const bool bPlayerValid = IsValid(Player) && Player->IsPlayerControlled();
+    const UCapsuleComponent* Capsule = bPlayerValid ? Cast<UCapsuleComponent>(Player->GetRootComponent()) : nullptr;
+    const bool bPlayerOverlapping = bPlayerValid && (Capsule ? Area.IsOverlappingComponent(Capsule) : Area.IsOverlappingActor(Player));
+    if (bPlayerOverlapping)
+    {
+        if (!IsPlayerFullyInsideRoomArea(Area, *Player))
+        {
+            return false;
+        }
+
+        if (!bRoomVisitActive)
+        {
+            bRoomVisitActive = true;
+            if (bUsePressureButtons && !bPuzzleStarted)
+            {
+                BeginPuzzle(Player);
+            }
+            if (bWaitingForEnemyEntry)
+            {
+                bWaitingForEnemyEntry = false;
+                bEnemySpawningPending = true;
+            }
+        }
+        return true;
+    }
+
+    if (!bRoomVisitActive && bPuzzleDoorUnlocked)
+    {
+        return false;
+    }
+
+    bRoomVisitActive = false;
+    bEnemySpawningPending = false;
+    bWaitingForEnemyEntry = RequestedEnemyCount > 0 || bDebugSpawnAllEnemies;
+    EnemySpawnIndex = 0;
+    EnemySpawnRetryRemaining = 0.0f;
+    ClearSpawnedWeepingAngels();
+
+    // Start the puzzle again on entry if the console still needs to be used.
+    bPuzzleStarted = bPuzzleStarted && bPuzzleDoorUnlocked;
+    bPuzzleDoorUnlocked = true;
+    IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
+    UpdateStatusLights();
+    if (!bButtonsUnlocked)
+    {
+        for (AMazePuzzleButton* Button : SpawnedButtons)
+        {
+            if (IsValid(Button))
+            {
+                Button->SetPressed(false);
+            }
+        }
+    }
+    return false;
 }
 
 bool UMazePuzzleComponent::CompletePuzzle()
@@ -786,6 +905,13 @@ void UMazePuzzleComponent::ClearSpawnedActors()
         }
     }
 
+    ClearSpawnedWeepingAngels();
+    SpawnedButtons.Reset();
+    DebugButtons.Reset();
+}
+
+void UMazePuzzleComponent::ClearSpawnedWeepingAngels()
+{
     for (APawn* Enemy : SpawnedWeepingAngels)
     {
         if (IsValid(Enemy))
@@ -801,8 +927,6 @@ void UMazePuzzleComponent::ClearSpawnedActors()
         }
     }
 
-    SpawnedButtons.Reset();
-    DebugButtons.Reset();
     SpawnedWeepingAngels.Reset();
 }
 

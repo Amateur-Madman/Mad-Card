@@ -159,8 +159,6 @@ protected:
 	virtual void HandleHurt(float Percent) override;
 	virtual void HandleDeath(float Percent) override;
 	UFUNCTION()
-	void HandleSitEnded();
-	UFUNCTION()
 	void HandleAmmoChanged(float Current, float Max);
 #pragma endregion
 
@@ -224,5 +222,20 @@ private:
 	TWeakObjectPtr<AActor> ViewLockTarget;
 	FVector ViewLockOffset = FVector::ZeroVector;
 	float ViewLockSpeed = 6.f;
+#pragma endregion
+
+#pragma region BoardAndChair
+public:
+	UPROPERTY()
+	class AChairForHangman* ChairForHangman;
+
+	UPROPERTY()
+	class AWrittingBoard* WrittingBoard;
+
+	void RegisterBoard(class AWrittingBoard* Board);
+	void RegisterChair(class AChairForHangman* Chair);
+
+private:
+	void TryLinkActors();
 #pragma endregion
 };

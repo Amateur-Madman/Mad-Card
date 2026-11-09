@@ -21,6 +21,8 @@
 #include "Audio/PlayerAudioComponent.h"
 #include "Utility/AITargetStack.h"
 #include "../AM_2610.h"
+#include "Actors/WrittingBoard.h"
+#include "Actors/ChairForHangman.h"
 
 
 
@@ -193,6 +195,30 @@ void ABasePlayer::Tick(float DeltaTime)
 		FMath::RInterpTo(ThePlayerController->GetControlRotation(), Desired, DeltaTime, ViewLockSpeed));
 }
 
+void ABasePlayer::RegisterBoard(class AWrittingBoard* Board)
+{
+	WrittingBoard = Board;
+	TryLinkActors();
+}
+
+void ABasePlayer::RegisterChair(class AChairForHangman* Chair)
+{
+	ChairForHangman = Chair;
+	TryLinkActors();
+}
+
+void ABasePlayer::TryLinkActors()
+{
+	if(ChairForHangman && WrittingBoard)
+	{
+		ChairForHangman->LinkToWrittingBoard(WrittingBoard);
+		WrittingBoard->LinkToChairForHangman(ChairForHangman);
+
+		ChairForHangman = nullptr;
+		WrittingBoard = nullptr;
+	}
+}
+
 void ABasePlayer::BeginPlay()
 {
 	Super::BeginPlay();
@@ -253,7 +279,6 @@ void ABasePlayer::BeginPlay()
 	if (AnimationReference)
 	{
 		AnimationReference->OnDeathEnded.AddDynamic(this, &ABasePlayer::PlayerLost);
-		AnimationReference->OnSitEnded.AddDynamic(this, &ABasePlayer::HandleSitEnded);
 	}
 	if (!ThePlayerController || HUDClass.IsNull())
 	{
@@ -402,17 +427,6 @@ void ABasePlayer::HandleDeath(float Percent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ABasePlayer::HandleDeath - GetController() did not cast to APlayerController, could not disable input"));
 	}
-}
-
-void ABasePlayer::HandleSitEnded()
-{
-	if (bIsDead)
-	{
-		return;
-	}
-
-	// TODO: whatever should happen once the sit animation is done
-	// (e.g. re-enable input if you locked it when the sit started)
 }
 void ABasePlayer::PlayerLost()
 {

@@ -37,7 +37,11 @@ void AWeepingAngel_Agent::PlayerSeesMe_Implementation(bool bIsSeen)
 
 void AWeepingAngel_Agent::BeginPlay()
 {
+	EasySpeed = 450.0f;
+	HardSpeed = 500.0f;
+
 	Super::BeginPlay();
+
 	if (ProximitySphere)
 	{
 		ProximitySphere->OnComponentBeginOverlap.AddDynamic(this, &AWeepingAngel_Agent::OnProximityOverlapBegin);
@@ -48,8 +52,6 @@ void AWeepingAngel_Agent::BeginPlay()
 		StimComponent->RegisterForSense(UAISense_Sight::StaticClass());
 		StimComponent->RegisterWithPerceptionSystem();
 	}
-
-	GetCharacterMovement()->MaxWalkSpeed = 450.0f;
 }
 
 void AWeepingAngel_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)

@@ -2,7 +2,10 @@
 
 
 #include "Both/CharacterAnimation.h"
+#include "Actors/ChairForHangman.h"
+#include "Actors/BasePlayer.h"
 #include "KismetAnimationLibrary.h"
+#include "Actors/ChairForHangman.h"
 #include "../AM_2610.h"
 
 // ---------------------------------------------------------------------------
@@ -59,12 +62,6 @@ void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 	{
 		DeathAnimation();
 		DebugDeath = false;
-	}
-
-	if (DebugSit)
-	{
-		SitAnimation();
-		DebugSit = false;
 	}
 }
 
@@ -123,7 +120,7 @@ void UCharacterAnimation::HandleDeathEnded()
 // Sit
 // ---------------------------------------------------------------------------
 
-void UCharacterAnimation::SitAnimation_Implementation()
+void UCharacterAnimation::SitAnimation()
 {
 	if (!SitAsset)
 	{
@@ -131,7 +128,7 @@ void UCharacterAnimation::SitAnimation_Implementation()
 		return;
 	}
 
-	PlaySlotAnimationAsDynamicMontage(SitAsset, SlotName, 0.25f, 0.25f, 1.f, 1);
+	PlaySlotAnimationAsDynamicMontage(SitAsset, FullBodySlot);
 
 	if (UWorld* World = GetWorld())
 	{
@@ -141,5 +138,5 @@ void UCharacterAnimation::SitAnimation_Implementation()
 
 void UCharacterAnimation::HandleSitEnded()
 {
-	OnSitEnded.Broadcast();
+	IsSitting = true;
 }

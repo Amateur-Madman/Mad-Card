@@ -62,7 +62,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
     FLinearColor CompletedLightColor = FLinearColor(0.02f, 1.0f, 0.05f);
 
-    // Existing whole-room overlap box. Keep it around the room and through the doorway.
+    // Use the existing room box to detect when the player has fully entered or left.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Departure")
     FName CompletedExitAreaTag = TEXT("RoomArea");
 
@@ -85,7 +85,7 @@ public:
 
     // Both buttons make the console ready. They do not unlock the door directly.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
-    bool bButtonsUnlocked = false; 
+    bool bButtonsUnlocked = false;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Puzzle|State")
     bool bPuzzleDoorUnlocked = true;
@@ -118,7 +118,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Puzzle|Events")
     FOnRoomPuzzleCompleted OnPuzzleCompleted;
 
-    // Call after the player has fully entered the pressure-button room.
+    // Call after the player has fully entered the pressure plate room.
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool BeginPuzzle(APawn* Player);
 
@@ -159,6 +159,7 @@ private:
     bool bDebugSpawnAllEnemies = false;
     bool bPrepared = false;
     bool bArmed = false;
+    bool bRoomVisitActive = false;
 
     TWeakObjectPtr<UBoxComponent> EnemyEntryTrigger;
     bool bWaitingForEnemyEntry = false;
@@ -175,6 +176,8 @@ private:
 
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;
+    bool UpdateRoomVisit(const UBoxComponent& Area);
+    void ClearSpawnedWeepingAngels();
     void ClearSpawnedActors();
 
     UPROPERTY(Transient)

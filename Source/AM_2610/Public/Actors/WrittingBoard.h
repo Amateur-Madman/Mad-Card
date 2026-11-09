@@ -33,18 +33,26 @@ public:
 
 	void SendKeyboardInput(const TCHAR& InKey);
 	void AllowInputProcessing();
-	void SetPlayerReady(bool bReady) { PlayerReady = bReady; }
 
+	UPROPERTY(BlueprintAssignable, Category = EditDefaultsOnly)
 	FOnInput OnRight;
+
+	UPROPERTY(BlueprintAssignable, Category = EditDefaultsOnly)
 	FOnInput OnWrong;
 
 	bool CanProcessInput = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	bool PlayerReady = false;
 
 	FTimerHandle InputTimer;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	float InputCooldown = 2.0f;
+	float InputCooldown = 1.0f;
+
+	void LockInputForDuration(float Duration);
+
+	void LinkToChairForHangman(class AChairForHangman* InChair) { ChairForHangman = InChair; }
 
 protected:
 	// Called when the game starts or when spawned
@@ -63,6 +71,8 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	class USentenceWordUnderlined* MainTextWidget;
 
+	class AChairForHangman* ChairForHangman;
+
 private:
 	float DrawX = 1920.0f;
 	float DrawY = 1080.0f;
@@ -74,4 +84,7 @@ private:
 
 	UFUNCTION()
 	void HandleLose();
+
+	UFUNCTION()
+	void DeclarePlayerReady() { PlayerReady = true; }
 };

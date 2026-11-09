@@ -3401,8 +3401,29 @@ void AMazeGenerator::CheckDoorGenerationSteamLeadIn()
     ApplyDoorLocks(NextRoom, DestinationDoors);
 
     // Entry triggers require TraversingMaze. Activate them after the steam
-    // lead-in, before doors receive the ready event and the player can enter.
+    // lead in, before doors receive the ready event and the player can enter.
     EnableChaserSpawnTrigger();
+
+    // Enable the wind overlap boxes on the accepted layout.
+    const FName HallwayWindTag(TEXT("HallwayWind"));
+    for (AMazeActors* Piece : SpawnedMazeActors)
+    {
+        if (!IsValid(Piece))
+        {
+            continue;
+        }
+
+        TArray<UBoxComponent*> Boxes;
+        Piece->GetComponents<UBoxComponent>(Boxes);
+        for (UBoxComponent* Box : Boxes)
+        {
+            if (IsValid(Box) && Box->ComponentHasTag(HallwayWindTag))
+            {
+                Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+            }
+        }
+    }
+
     if (UMazePuzzleComponent* Puzzle = GetPuzzleComponent())
     {
         Puzzle->ArmPuzzle();
