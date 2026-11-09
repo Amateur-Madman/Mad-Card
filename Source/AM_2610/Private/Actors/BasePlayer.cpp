@@ -214,7 +214,7 @@ void ABasePlayer::TryLinkActors()
 		ChairForHangman->LinkToWrittingBoard(WrittingBoard);
 		WrittingBoard->LinkToChairForHangman(ChairForHangman);
 
-		//ChairForHangman = nullptr;
+		ChairForHangman = nullptr;
 		WrittingBoard = nullptr;
 	}
 }

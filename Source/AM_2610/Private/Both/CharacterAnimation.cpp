@@ -5,6 +5,7 @@
 #include "Actors/ChairForHangman.h"
 #include "Actors/BasePlayer.h"
 #include "KismetAnimationLibrary.h"
+#include "Actors/ChairForHangman.h"
 #include "../AM_2610.h"
 
 // ---------------------------------------------------------------------------
@@ -36,19 +37,6 @@ void UCharacterAnimation::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 // ---------------------------------------------------------------------------
 // Preview window debugging
 // ---------------------------------------------------------------------------
-
-void UCharacterAnimation::NativeInitializeAnimation()
-{
-	Super::NativeInitializeAnimation();
-
-	if(ABasePlayer* Player = Cast<ABasePlayer>(TryGetPawnOwner()))
-	{
-		if(Player->ChairForHangman)
-		{
-			Player->ChairForHangman->OnPlayerReady.AddDynamic(this, &UCharacterAnimation::DeclareSitting);
-		}
-	}
-}
 
 void UCharacterAnimation::PreviewWindowUpdate_Implementation()
 {
@@ -140,12 +128,15 @@ void UCharacterAnimation::SitAnimation()
 		return;
 	}
 
-	UAnimMontage* AnimReturn = PlaySlotAnimationAsDynamicMontage(SitAsset, FullBodySlot);
+	PlaySlotAnimationAsDynamicMontage(SitAsset, FullBodySlot);
 
-	UE_LOG(LogTemp, Warning, TEXT("SitDebug | Return: %s | Slot: %s | Length: %.2f | AssetSkel: %s | MySkel: %s"),
-		AnimReturn ? *AnimReturn->GetName() : TEXT("NULLPTR"),
-		*FullBodySlot.ToString(),
-		SitAsset->GetPlayLength(),
-		*GetNameSafe(SitAsset->GetSkeleton()),
-		*GetNameSafe(CurrentSkeleton));
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(SitEndedTimerHandle, this, &UCharacterAnimation::HandleSitEnded, SitAsset->GetPlayLength(), false);
+	}
+}
+
+void UCharacterAnimation::HandleSitEnded()
+{
+	IsSitting = true;
 }
