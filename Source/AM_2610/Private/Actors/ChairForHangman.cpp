@@ -35,9 +35,11 @@ void AChairForHangman::HandlePickup(AActor* OtherActor, const FHitResult& SweepR
                 OtherCharacter->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, 0.0f));
                 if(UCharacterAnimation* OtherCharacterAnim = Cast<UCharacterAnimation>(OtherCharacter->GetMesh()->GetAnimInstance()))
                 {
-                    //OtherCharacter->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
                     OtherCharacterAnim->SitAnimation();
-					OnPlayerReady.Broadcast();
+                    if (UWorld* World = GetWorld())
+                    {
+                        World->GetTimerManager().SetTimer(SitEndedTimerHandle, this, &AChairForHangman::HandlePlayerReady, 2.23f, false);
+                    }
 				}
 			}
 			BoxCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -67,4 +69,12 @@ void AChairForHangman::BeginPlay()
 void AChairForHangman::PostPickup()
 {
     //Empty; Do nothing after "picked up"
+}
+
+void AChairForHangman::HandlePlayerReady()
+{
+    if (CaughtPlayer)
+    {
+        OnPlayerReady.Broadcast();
+	}
 }

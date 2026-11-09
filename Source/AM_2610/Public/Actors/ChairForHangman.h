@@ -35,4 +35,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class ABasePlayer* CaughtPlayer;
+
+private:
+	UFUNCTION()
+	void HandlePlayerReady();
+
+	FTimerHandle SitEndedTimerHandle;
 };

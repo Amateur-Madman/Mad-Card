@@ -38,7 +38,7 @@ void AAgent::BeginPlay()
 
 	if(HardSpeed && EasySpeed)
 	{
-		SetDifficultySpeeds(EasySpeed, HardSpeed);
+		//SetDifficultySpeeds(EasySpeed, HardSpeed);
 		SpeedAccordingToDiff();
 	}
 
