@@ -5,13 +5,13 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Utility/Interactable.h"
+#include "Cards/CardHandComponent.h"
+#include "Cards/CardCarouselWidget.h"
 #include "PlayerHUD.generated.h"
 
 /**
  *
  */
-class UBaseCard;
-class UCardSlotWidget;
 UCLASS()
 class AM_2610_API UPlayerHUD : public UUserWidget
 {
@@ -33,16 +33,8 @@ public:
 	// from the prompt, or hides the text when Prompt.Target is null.
 	UFUNCTION()
 	void SetInteractPrompt(const FInteractPrompt& Prompt);
-	// Bound to UCardHandComponent::OnCardSlotChanged / OnCardUsed. They forward to the
-	// Blueprint events below so the card visuals can be built in the WBP graph.
-	UFUNCTION()
-	void SetCardSlot(int32 SlotIndex, UBaseCard* Card);
-
-	UFUNCTION()
-	void CardUsed(int32 SlotIndex, UBaseCard* Card);
-
-	UFUNCTION()
-	void CardRefused(int32 SlotIndex, UBaseCard* Card, ECardFeedback Reason);
+	// Hands the hand to the card carousel, which listens to its events and draws it
+	void BindCardHand(UCardHandComponent* Hand);
 
 protected:
 	virtual void NativeConstruct() override;
@@ -50,14 +42,6 @@ protected:
 
 	// Asks Enhanced Input which key is currently mapped to Action ("E"); keyboard/mouse preferred
 	FText GetKeyText(const class UInputAction* Action) const;
-
-	// Card == null means the slot is empty
-	UFUNCTION(BlueprintImplementableEvent, Category = "Cards", meta = (DisplayName = "On Card Slot Changed"))
-	void BP_OnCardSlotChanged(int32 SlotIndex, UBaseCard* Card);
-
-	// Fires before the slot clears - play the "card spent" flash/animation here
-	UFUNCTION(BlueprintImplementableEvent, Category = "Cards", meta = (DisplayName = "On Card Used"))
-	void BP_OnCardUsed(int32 SlotIndex, UBaseCard* Card);
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	class UProgressBar* HealthBar;
@@ -93,14 +77,5 @@ protected:
 	class UTextBlock* InteractPromptText;
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-	UCardSlotWidget* CardSlot_0;
-
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-	UCardSlotWidget* CardSlot_1;
-
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
-	UCardSlotWidget* CardSlot_2;
-
-	UPROPERTY()
-	TArray<UCardSlotWidget*> CardSlots;
+	UCardCarouselWidget* CardCarousel;
 };
