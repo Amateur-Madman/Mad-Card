@@ -9,11 +9,13 @@
 
 class AMazeGenerator;
 class APawn;
+class UAudioComponent;
 class UBoxComponent;
 class UCapsuleComponent;
 class ULightComponent;
 class UMaterialInstanceDynamic;
 class UShapeComponent;
+class USoundBase;
 
 UENUM(BlueprintType)
 enum class ETrapRoomState : uint8
@@ -69,6 +71,18 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Timing")
     bool bRepeatWhenEmpty = true;
 
+    // Plays during the warning and stops when the flames start.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> WarningAlarm = nullptr;
+
+    // Fallback ignition cue when FireActiveSound is unset.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> FireIgnitionClick = nullptr;
+
+    // Starts with the flames and stops when they shut off.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> FireActiveSound = nullptr;
+
     // These parameters belong to a copy of the bollard's emissive material.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Light")
     FName LightColorParameter = TEXT("TrapColor");
@@ -104,6 +118,8 @@ private:
     TWeakObjectPtr<AMazeGenerator> MazeGenerator;
     TArray<TWeakObjectPtr<UActorComponent>> FlameComponents;
     TArray<TWeakObjectPtr<ULightComponent>> WarningLights;
+    TWeakObjectPtr<UAudioComponent> ActiveWarningAlarm;
+    TWeakObjectPtr<UAudioComponent> ActiveFireAudio;
 
     UPROPERTY(Transient)
     TArray<TObjectPtr<UMaterialInstanceDynamic>> WarningMaterials;
@@ -125,6 +141,7 @@ private:
     void EnableDamage();
     void FinishFire();
     void ResetTrap();
+    void StopWarningAlarm();
     void SetWarningLights(bool bOn);
     void SetFlames(bool bOn);
     void DestroyRoomCards();
