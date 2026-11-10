@@ -4,16 +4,21 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Animation/WidgetAnimation.h"
+#include "Components/Border.h"
+#include "Components/Image.h"
+#include "Components/TextBlock.h"
+#include "Cards/BaseCard.h"
 #include "CardSlotWidget.generated.h"
 
-class UBaseCard;
-class UBorder;
-class UImage;
-class UTextBlock;
-
 /**
- * One slot of the card bar. All behaviour (show/hide, pop-in, "card spent" flash) is in C++, so
- * the WBP child only needs the layout with the right widget names - no graph, no UMG animations.
+ * One card face. Used three times by the carousel (previous / current / next).
+ * Behaviour is event-driven: SetCard / PlayUsed / PlayRefused start UMG animations authored in the
+ * WBP child. Every animation is optional - a missing one simply doesn't play.
+ *
+ * Author the animations on a panel INSIDE the slot (e.g. the root Overlay), not on the slot widget
+ * itself, so any per-instance render scale / opacity set in the carousel (smaller, dimmed side
+ * cards) is left alone.
  */
 UCLASS()
 class AM_2610_API UCardSlotWidget : public UUserWidget
@@ -25,19 +30,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Card Slot")
 	void SetCard(UBaseCard* Card);
 
-	// Flashes a ghost of the card's icon growing and fading. Call BEFORE the slot clears.
+	// Plays the "card spent" animation on the ghost of the card's icon. Call BEFORE the card is removed.
 	UFUNCTION(BlueprintCallable, Category = "Card Slot")
 	void PlayUsed(UBaseCard* Card);
 
-	// Red flash + small shake. Called when a use attempt is refused.
+	// Plays the "refused" animation (red flash + shake)
 	UFUNCTION(BlueprintCallable, Category = "Card Slot")
 	void PlayRefused();
 
 protected:
 	virtual void NativePreConstruct() override;
-	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
-	// Set per instance in the HUD designer ("1", "2", "3")
+	// Set per instance in the carousel designer (e.g. a hint for the use / cycle button)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Card Slot")
 	FText KeyLabel;
 
@@ -57,44 +61,25 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UTextBlock* KeyText;
 
-	// Same size/position as CardIcon; only visible during the "used" flash
+	// Same size/position as CardIcon; rests at opacity 0 and is only visible during UsedAnim
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UImage* CardGhost;
 
-	// Pop-in length (seconds) when a card arrives in an empty slot
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	float GainDuration = 0.25f;
+	// A card arrives in an empty slot (e.g. scale 0.7 -> 1.08 -> 1.0 with a fade-in)
+	UPROPERTY(Transient, BlueprintReadOnly, meta = (BindWidgetAnimOptional))
+	TObjectPtr<UWidgetAnimation> GainAnim;
 
-	// Length of the "used" flash
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	float UsedDuration = 0.2f;
+	// The ghost grows and fades out (e.g. scale 1.0 -> 1.4, opacity 1 -> 0)
+	UPROPERTY(Transient, BlueprintReadOnly, meta = (BindWidgetAnimOptional))
+	TObjectPtr<UWidgetAnimation> UsedAnim;
 
-	// How big the ghost grows by the end of the flash
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	float GhostEndScale = 1.4f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	float RefusedDuration = 0.3f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	FLinearColor RefusedColor = FLinearColor(1.f, 0.1f, 0.1f, 1.f);
-
-	// Horizontal shake in pixels; 0 = flash only
-	UPROPERTY(EditDefaultsOnly, Category = "Animation")
-	float RefusedShake = 6.f;
+	// Frame colors flash red and fade back, with a quick decaying horizontal shake
+	UPROPERTY(Transient, BlueprintReadOnly, meta = (BindWidgetAnimOptional))
+	TObjectPtr<UWidgetAnimation> RefusedAnim;
 
 private:
 	void ShowEmpty();
+	void RestartAnimation(UWidgetAnimation* Anim);
 
 	bool bHasCard = false;
-
-	// Elapsed time of each effect; == duration means "not playing"
-	float GainElapsed = 0.f;
-	float UsedElapsed = 0.f;
-
-	void ApplyRefused(float Alpha, float ShakeX);
-
-	FLinearColor EmptyBaseColor = FLinearColor::White;
-	FLinearColor CardBaseColor = FLinearColor::White;
-	float RefusedElapsed = 0.f;
 };
