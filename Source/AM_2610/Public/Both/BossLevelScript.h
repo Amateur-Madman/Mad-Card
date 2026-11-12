@@ -33,13 +33,13 @@ protected:
 
 	//World Components for Input reactions
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<TObjectPtr<class ASpawner>> Spawners;
+	TArray<class ASpawner*> Spawners;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<TObjectPtr<class AActor>> FloorSections;
+	TArray<class AActor*> FloorSections;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<TObjectPtr<class APointLight>> Lights;
+	TArray<class APointLight*> Lights;
 
 private:
 	UFUNCTION()
