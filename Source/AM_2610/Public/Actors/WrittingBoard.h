@@ -31,6 +31,9 @@ class AM_2610_API AWrittingBoard : public AActor
 public:	
 	AWrittingBoard();
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
+	class USentenceWordUnderlined* MainTextWidget;
+
 	void SendKeyboardInput(const TCHAR& InKey);
 	void AllowInputProcessing();
 
@@ -67,9 +70,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SentenceWordUnderlinedClass;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
-	class USentenceWordUnderlined* MainTextWidget;
 
 	class AChairForHangman* ChairForHangman;
 
