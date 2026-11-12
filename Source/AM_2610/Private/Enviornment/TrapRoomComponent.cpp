@@ -4,6 +4,7 @@
 #include "Enviornment/TrapRoomComponent.h"
 #include "Actors/BaseGameMode.h"
 #include "Actors/CardPickup.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/LightComponent.h"
@@ -13,6 +14,7 @@
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Sound/SoundBase.h"
 
 UTrapRoomComponent::UTrapRoomComponent()
 {
@@ -218,7 +220,8 @@ void UTrapRoomComponent::CheckPlayer()
     {
         StartWarning();
     }
-    else if (TrapState == ETrapRoomState::Firing && bInside && IsPlayerInsideDamageArea(Player) && !bLossReported)
+    else if (TrapState == ETrapRoomState::Firing && bDamageActive && bInside &&
+        !bLossReported && IsPlayerInsideDamageArea(Player))
     {
         ABaseGameMode* GameMode = Cast<ABaseGameMode>(UGameplayStatics::GetGameMode(this));
 
@@ -255,6 +258,11 @@ void UTrapRoomComponent::StartWarning()
         return;
     }
 
+    if (WarningAlarm)
+    {
+        ActiveWarningAlarm = UGameplayStatics::SpawnSoundAttached(WarningAlarm.Get(), RoomArea.Get());
+    }
+
     GetWorld()->GetTimerManager().SetTimer(WarningTimer, this, &UTrapRoomComponent::StartFire, WarningDuration, false);
 }
 
@@ -274,7 +282,9 @@ void UTrapRoomComponent::StartFire()
         return;
     }
 
-    GetWorld()->GetTimerManager().ClearTimer(FlashTimer);
+    FTimerManager& TimerManager = GetWorld()->GetTimerManager();
+    TimerManager.ClearTimer(FlashTimer);
+    StopWarningAlarm();
     TrapState = ETrapRoomState::Firing;
     SetWarningLights(true);
     SetFlames(true);
@@ -282,12 +292,30 @@ void UTrapRoomComponent::StartFire()
     // Burn only this room's card pickups, even if the player escaped the warning.
     DestroyRoomCards();
 
-    GetWorld()->GetTimerManager().SetTimer(FireTimer, this, &UTrapRoomComponent::FinishFire, FMath::Max(0.1f, FireDuration), false);
+    const float EffectiveFireDuration = FMath::Max(0.1f, FireDuration);
+    const float Delay = FMath::Max(0.0f, DamageStartDelay);
+    TimerManager.SetTimer(FireTimer, this, &UTrapRoomComponent::FinishFire, EffectiveFireDuration, false);
+
+    if (Delay <= 0.0f)
+    {
+        EnableDamage();
+    }
+    else if (Delay < EffectiveFireDuration)
+    {
+        TimerManager.SetTimer(DamageStartTimer, this, &UTrapRoomComponent::EnableDamage, Delay, false);
+    }
+}
+
+void UTrapRoomComponent::EnableDamage()
+{
+    bDamageActive = true;
     CheckPlayer();
 }
 
 void UTrapRoomComponent::FinishFire()
 {
+    GetWorld()->GetTimerManager().ClearTimer(DamageStartTimer);
+    bDamageActive = false;
     SetFlames(false);
     SetWarningLights(false);
     TrapState = ETrapRoomState::Spent;
@@ -298,10 +326,23 @@ void UTrapRoomComponent::ResetTrap()
     GetWorld()->GetTimerManager().ClearTimer(WarningTimer);
     GetWorld()->GetTimerManager().ClearTimer(FlashTimer);
     GetWorld()->GetTimerManager().ClearTimer(FireTimer);
+    GetWorld()->GetTimerManager().ClearTimer(DamageStartTimer);
+    bDamageActive = false;
     SetFlames(false);
     SetWarningLights(false);
+    StopWarningAlarm();
     TrapState = ETrapRoomState::Idle;
     bLossReported = false;
+}
+
+void UTrapRoomComponent::StopWarningAlarm()
+{
+    if (UAudioComponent* Alarm = ActiveWarningAlarm.Get())
+    {
+        Alarm->Stop();
+    }
+
+    ActiveWarningAlarm.Reset();
 }
 
 void UTrapRoomComponent::SetWarningLights(bool bOn)
@@ -352,6 +393,26 @@ void UTrapRoomComponent::SetFlames(bool bOn)
             Component->Deactivate();
         }
     }
+
+    if (!bOn)
+    {
+        if (UAudioComponent* Audio = ActiveFireAudio.Get())
+        {
+            Audio->Stop();
+        }
+
+        ActiveFireAudio.Reset();
+        return;
+    }
+
+    if (FireActiveSound)
+    {
+        ActiveFireAudio = UGameplayStatics::SpawnSoundAttached(FireActiveSound.Get(), RoomArea.Get());
+    }
+    else if (FireIgnitionClick)
+    {
+        UGameplayStatics::SpawnSoundAttached(FireIgnitionClick.Get(), RoomArea.Get());
+    }
 }
 
 void UTrapRoomComponent::DestroyRoomCards()
@@ -388,5 +449,6 @@ void UTrapRoomComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
     SetFlames(false);
     SetWarningLights(false);
+    StopWarningAlarm();
     Super::EndPlay(EndPlayReason);
 }

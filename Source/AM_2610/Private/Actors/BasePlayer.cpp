@@ -21,6 +21,8 @@
 #include "Audio/PlayerAudioComponent.h"
 #include "Utility/AITargetStack.h"
 #include "../AM_2610.h"
+#include "Actors/WrittingBoard.h"
+#include "Actors/ChairForHangman.h"
 
 
 
@@ -193,6 +195,30 @@ void ABasePlayer::Tick(float DeltaTime)
 		FMath::RInterpTo(ThePlayerController->GetControlRotation(), Desired, DeltaTime, ViewLockSpeed));
 }
 
+void ABasePlayer::RegisterBoard(class AWrittingBoard* Board)
+{
+	WrittingBoard = Board;
+	TryLinkActors();
+}
+
+void ABasePlayer::RegisterChair(class AChairForHangman* Chair)
+{
+	ChairForHangman = Chair;
+	TryLinkActors();
+}
+
+void ABasePlayer::TryLinkActors()
+{
+	if (ChairForHangman && WrittingBoard)
+	{
+		ChairForHangman->LinkToWrittingBoard(WrittingBoard);
+		WrittingBoard->LinkToChairForHangman(ChairForHangman);
+
+		ChairForHangman = nullptr;
+		WrittingBoard = nullptr;
+	}
+}
+
 void ABasePlayer::BeginPlay()
 {
 	Super::BeginPlay();
@@ -283,10 +309,7 @@ void ABasePlayer::BeginPlay()
 
 	if (CardHand)
 	{
-		CardHand->OnCardSlotChanged.AddDynamic(HUDObject, &UPlayerHUD::SetCardSlot);
-		CardHand->OnCardUsed.AddDynamic(HUDObject, &UPlayerHUD::CardUsed);
-		CardHand->OnCardRefused.AddDynamic(HUDObject, &UPlayerHUD::CardRefused);
-		CardHand->RefreshAll(); // starting cards were added before the HUD existed
+		HUDObject->BindCardHand(CardHand); // the carousel listens to the hand itself and draws the starting cards
 	}
 
 }
@@ -299,13 +322,31 @@ void ABasePlayer::InputInteract2()
 {
 	TryInteract(EInteractSlot::Secondary);
 }
-void ABasePlayer::InputUseCard(int32 SlotIndex)
+void ABasePlayer::InputCardNext()
 {
 	if (bIsDead || !CardHand)
 	{
 		return;
 	}
-	CardHand->UseSlot(SlotIndex);
+	CardHand->CycleSelection(+1);
+}
+
+void ABasePlayer::InputCardPrev()
+{
+	if (bIsDead || !CardHand)
+	{
+		return;
+	}
+	CardHand->CycleSelection(-1);
+}
+
+void ABasePlayer::InputCardUse()
+{
+	if (bIsDead || !CardHand)
+	{
+		return;
+	}
+	CardHand->UseSelected();
 }
 
 void ABasePlayer::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -338,13 +379,18 @@ void ABasePlayer::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	{
 		EnhancedInput->BindAction(InteractSecondaryAction, ETriggerEvent::Started, this, &ABasePlayer::InputInteract2);
 	}
-	// One action per slot; the slot index rides along as the payload
-	for (int32 i = 0; i < CardSlotActions.Num(); ++i)
+	// Card hotbar - Started = once per press
+	if (CardNextAction)
 	{
-		if (CardSlotActions[i])
-		{
-			EnhancedInput->BindAction(CardSlotActions[i], ETriggerEvent::Started, this, &ABasePlayer::InputUseCard, i);
-		}
+		EnhancedInput->BindAction(CardNextAction, ETriggerEvent::Started, this, &ABasePlayer::InputCardNext);
+	}
+	if (CardPrevAction)
+	{
+		EnhancedInput->BindAction(CardPrevAction, ETriggerEvent::Started, this, &ABasePlayer::InputCardPrev);
+	}
+	if (CardUseAction)
+	{
+		EnhancedInput->BindAction(CardUseAction, ETriggerEvent::Started, this, &ABasePlayer::InputCardUse);
 	}
 }
 

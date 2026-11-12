@@ -9,11 +9,13 @@
 
 class AMazeGenerator;
 class APawn;
+class UAudioComponent;
 class UBoxComponent;
 class UCapsuleComponent;
 class ULightComponent;
 class UMaterialInstanceDynamic;
 class UShapeComponent;
+class USoundBase;
 
 UENUM(BlueprintType)
 enum class ETrapRoomState : uint8
@@ -61,9 +63,25 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Timing", meta = (ClampMin = "0.1", Units = "s"))
     float FireDuration = 3.0f;
 
+    // Seconds after the flames activate before the damage areas can hit the player.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Timing", meta = (ClampMin = "0.0", Units = "s"))
+    float DamageStartDelay = 0.25f;
+
     // Rearm after the fire ends and the player leaves. Disable for a single-use trap.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Timing")
     bool bRepeatWhenEmpty = true;
+
+    // Plays during the warning and stops when the flames start.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> WarningAlarm = nullptr;
+
+    // Fallback ignition cue when FireActiveSound is unset.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> FireIgnitionClick = nullptr;
+
+    // Starts with the flames and stops when they shut off.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Audio")
+    TObjectPtr<USoundBase> FireActiveSound = nullptr;
 
     // These parameters belong to a copy of the bollard's emissive material.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trap|Light")
@@ -100,6 +118,8 @@ private:
     TWeakObjectPtr<AMazeGenerator> MazeGenerator;
     TArray<TWeakObjectPtr<UActorComponent>> FlameComponents;
     TArray<TWeakObjectPtr<ULightComponent>> WarningLights;
+    TWeakObjectPtr<UAudioComponent> ActiveWarningAlarm;
+    TWeakObjectPtr<UAudioComponent> ActiveFireAudio;
 
     UPROPERTY(Transient)
     TArray<TObjectPtr<UMaterialInstanceDynamic>> WarningMaterials;
@@ -108,7 +128,9 @@ private:
     FTimerHandle WarningTimer;
     FTimerHandle FlashTimer;
     FTimerHandle FireTimer;
+    FTimerHandle DamageStartTimer;
     bool bLightOn = false;
+    bool bDamageActive = false;
     bool bLossReported = false;
 
     void InitializeTrap();
@@ -116,8 +138,10 @@ private:
     void StartWarning();
     void ToggleWarningLight();
     void StartFire();
+    void EnableDamage();
     void FinishFire();
     void ResetTrap();
+    void StopWarningAlarm();
     void SetWarningLights(bool bOn);
     void SetFlames(bool bOn);
     void DestroyRoomCards();

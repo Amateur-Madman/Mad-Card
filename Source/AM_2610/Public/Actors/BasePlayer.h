@@ -6,6 +6,8 @@
 #include "Actors/BaseCharacter.h"
 #include "Utility/Interactable.h"
 #include "InputActionValue.h"
+#include "InputAction.h"
+#include "Cards/CardHandComponent.h"
 #include "Perception/AIPerceptionTypes.h"
 #include "Components/SlateWrapperTypes.h"
 #include "BasePlayer.generated.h"
@@ -79,9 +81,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Input")
 	class UInputAction* InteractSecondaryAction;
 
-	// One Input Action per hand slot, in slot order (IA_Card1, IA_Card2, IA_Card3)
-	UPROPERTY(EditDefaultsOnly, Category = "Input")
-	TArray<class UInputAction*> CardSlotActions;
+	// Card hotbar: bumpers / mouse wheel cycle the selection, one button uses the selected card.
+	// Digital actions, triggered on press (IA_CardNext, IA_CardPrev, IA_CardUse)
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Cards")
+	TObjectPtr<UInputAction> CardNextAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Cards")
+	TObjectPtr<UInputAction> CardPrevAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Input|Cards")
+	TObjectPtr<UInputAction> CardUseAction;
 
 private:
 	// Enhanced Input handlers
@@ -89,7 +98,9 @@ private:
 	void Look(const FInputActionValue& Value);
 	void InputInteract1();
 	void InputInteract2();
-	void InputUseCard(int32 SlotIndex);
+	void InputCardNext();
+	void InputCardPrev();
+	void InputCardUse();
 #pragma endregion
 
 #pragma region Audio
@@ -144,8 +155,8 @@ private:
 #pragma region Cards
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cards")
-	class UCardHandComponent* CardHand;
-	
+	UCardHandComponent* CardHand;
+
 #pragma endregion
 
 #pragma region Combat
