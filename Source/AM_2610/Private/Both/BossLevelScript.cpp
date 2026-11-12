@@ -9,6 +9,9 @@
 #include "Actors/BasePlayerController.h"
 #include "GameFramework/GameStateBase.h"
 #include "Both/SentenceWordUnderlined.h"
+#include "LevelSequence.h"
+#include "LevelSequencePlayer.h"
+#include "LevelSequenceActor.h"
 
 void ABossLevelScript::BeginPlay()
 {
@@ -17,10 +20,12 @@ void ABossLevelScript::BeginPlay()
 	{
 		WrittingBoard->OnRight.AddDynamic(this, &ABossLevelScript::OnCorrectInput);	
 		WrittingBoard->OnWrong.AddDynamic(this, &ABossLevelScript::OnIncorrectInput);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ChairForHangman or WrittingBoard is not set in BossLevelScript."));
+
+		if (IntroSequence)
+		{
+			SequenceQueue.Add(IntroSequence);
+			PlayNextSequence();
+		}
 	}
 }
 
@@ -59,14 +64,55 @@ void ABossLevelScript::TryLinkActors()
 	}
 }
 
-void ABossLevelScript::RegisterBoard(AWrittingBoard* Board)
+void ABossLevelScript::RegisterBoard(TObjectPtr<AWrittingBoard> Board)
 {
 	WrittingBoard = Board;
 	TryLinkActors();
 }
 
-void ABossLevelScript::RegisterChair(AChairForHangman* Chair)
+void ABossLevelScript::RegisterChair(TObjectPtr<AChairForHangman> Chair)
 {
 	ChairForHangman = Chair;
 	TryLinkActors();
+}
+
+// Sequence handling
+void ABossLevelScript::PlayNextSequence()
+{
+	if(SequenceQueue.Num() == 0)
+	{
+		return;
+	}
+
+	FMovieSceneSequencePlaybackSettings PlaybackSettings;
+	PlaybackSettings.bPauseAtEnd = true; // Keeps actors at their final positions
+
+	if (SequenceActor)
+	{
+		SequenceActor->Destroy();
+		SequenceActor = nullptr;
+	}
+
+	SequencePlayer = ULevelSequencePlayer::CreateLevelSequencePlayer(
+		GetWorld(), 
+		SequenceQueue[0], 
+		PlaybackSettings, 
+		SequenceActor);
+
+	if(SequencePlayer)
+	{
+		SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnIntroSequenceFinished);
+		IsSequencePlaying = true;
+		SequencePlayer->Play();
+	}
+}
+
+void ABossLevelScript::EnqueueSequence(ULevelSequence* SequenceToAdd)
+{
+}
+
+void ABossLevelScript::OnIntroSequenceFinished()
+{
+	UE_LOG(LogTemp, Log, TEXT("Intro sequence finished."));
+	IsSequencePlaying = false;
 }

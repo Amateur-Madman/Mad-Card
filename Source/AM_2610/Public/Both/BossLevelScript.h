@@ -16,10 +16,24 @@ class AM_2610_API ABossLevelScript : public ALevelScriptActor
 	
 public:
 	TObjectPtr<class ABasePlayer> Player;
-	TObjectPtr<class AMadMan> MadMan;
 
-	void RegisterBoard(class AWrittingBoard* Board);
-	void RegisterChair(class AChairForHangman* Chair);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TObjectPtr<class AMadMan_Agent> MadMan;
+
+	void RegisterBoard(TObjectPtr<class AWrittingBoard> Board);
+	void RegisterChair(TObjectPtr<class AChairForHangman> Chair);
+
+	UFUNCTION(BlueprintCallable, Category = "Sequencer")
+	void EnqueueSequence(class ULevelSequence* SequenceToAdd);
+
+	UFUNCTION(BlueprintCallable, Category = "Sequencer")
+	void PlayNextSequence();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sequencer")
+	class ULevelSequence* IntroSequence;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TObjectPtr<class AWrittingBoard> WrittingBoard;
 
 protected:
 	virtual void BeginPlay() override;
@@ -28,20 +42,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TObjectPtr<class AChairForHangman> ChairForHangman;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TObjectPtr<class AWrittingBoard> WrittingBoard;
-
 	//World Components for Input reactions
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<class ASpawner*> Spawners;
+	TArray<TObjectPtr<class ASpawner>> Spawners;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<class AActor*> FloorSections;
+	TArray<TObjectPtr<class AActor>> FloorSections;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<class APointLight*> Lights;
+	TArray<TObjectPtr<class APointLight>> Lights;
 
 private:
+	//Input tracking/ reaction
 	UFUNCTION()
 	void OnCorrectInput();
 
@@ -51,4 +63,22 @@ private:
 	void Last3WrongInputs();
 
 	void TryLinkActors();
+
+	//Sequence handling
+	bool IsSequencePlaying = false;
+
+	UPROPERTY()
+	TArray<class ULevelSequence*> SequenceQueue;
+
+	UPROPERTY()
+	class ULevelSequencePlayer* SequencePlayer;
+
+	UPROPERTY()
+	class ALevelSequenceActor* SequenceActor;
+
+	UFUNCTION()
+	void OnIntroSequenceFinished();
+
+	//UFUNCTION()
+	//void OnSequenceFinished();
 };

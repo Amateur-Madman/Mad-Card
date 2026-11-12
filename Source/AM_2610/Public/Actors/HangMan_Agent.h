@@ -27,7 +27,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class ABasePlayer* CaughtPlayer;
 
-	void BeginPlay() override;
+	virtual void BeginPlay() override;
 	
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode) override;
 
