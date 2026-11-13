@@ -51,7 +51,7 @@ namespace
     void MakeMovable(AMazeActors* Piece)
     {
         TArray<USceneComponent*> Components;
-        // Move child-actor geometry with the same bounds used for placement.
+        // Move child actor geometry with the same bounds used for placement.
         Piece->GetComponents<USceneComponent>(Components, true);
 
         for (USceneComponent* Component : Components)
@@ -291,12 +291,150 @@ AMazeGenerator::AMazeGenerator()
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.bStartWithTickEnabled = false;
     SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("GeneratorRoot")));
+    EasySettings.TrapRoomCount = 1;
+    EasySettings.PressurePlateWeepingAngelCount = 1;
+}
+
+EMazeDifficulty AMazeGenerator::ResolveRunDifficulty() const
+{
+    const UMazeSaveSubsystem* SaveSystem = UMazeSaveSubsystem::Get(this);
+    return IsValid(SaveSystem) ? SaveSystem->GetDifficulty() : EMazeDifficulty::Hard;
+}
+
+const FMazeGeneratorDifficultySettings& AMazeGenerator::GetActiveDifficultySettings() const
+{
+    return ActiveDifficulty == EMazeDifficulty::Easy ? EasySettings : HardSettings;
+}
+
+const TMap<FName, TSubclassOf<AMazeActors>>& AMazeGenerator::GetActivePuzzleRooms() const
+{
+    return GetActiveDifficultySettings().PuzzleRoomsById;
+}
+
+const TCHAR* AMazeGenerator::GetSeedDifficultySuffix() const
+{
+    return ActiveDifficulty == EMazeDifficulty::Easy ? TEXT("easy") : TEXT("hard");
+}
+
+bool AMazeGenerator::ApplyDifficultySettings()
+{
+    ActiveDifficulty = ResolveRunDifficulty();
+    const FMazeGeneratorDifficultySettings& Settings = GetActiveDifficultySettings();
+    const int32 ExistingHangmen = EnemyHallwayCounts.FindRef(HangmanEnemyTag);
+    const int32 HardHangmen = FMath::Clamp(HardSettings.HangmanCount < 0 ? ExistingHangmen : HardSettings.HangmanCount, 0, 16);
+    const int32 AutomaticHangmen = ActiveDifficulty == EMazeDifficulty::Easy ? HardHangmen / 2 : HardHangmen;
+    EffectiveHangmanCount = Settings.HangmanCount < 0 ? AutomaticHangmen : FMath::Clamp(Settings.HangmanCount, 0, 16);
+    EffectiveTrapRoomCount = Settings.TrapRoomCount < 0 ? -1 : FMath::Clamp(Settings.TrapRoomCount, 0, 100);
+
+    const bool bNeedsHangmanSetup = ActiveDifficulty == EMazeDifficulty::Easy || EffectiveHangmanCount > 0;
+    if (bNeedsHangmanSetup && (HangmanEnemyTag.IsNone() || HangmanEnemyTag == ChaserEnemyTag
+        || HangmanEnemyTag == WeepingAngelEnemyTag || !EnemyClassesByTag.FindRef(HangmanEnemyTag)))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Maze difficulty: Set HangmanEnemyTag to the existing Hangman tag in EnemyClassesByTag. It must differ from Chaser and Weeping Angel tags."));
+        return false;
+    }
+
+    const auto& Rooms = GetActivePuzzleRooms();
+    const auto& HardRooms = HardSettings.PuzzleRoomsById;
+    if (Rooms.Num() != 3)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Maze difficulty: Assign exactly three puzzle room assets in %s settings, with the same stable IDs in both difficulties."), GetSeedDifficultySuffix());
+        return false;
+    }
+    for (const auto& Entry : Rooms)
+    {
+        if (Entry.Key.IsNone() || !Entry.Value
+            || (ActiveDifficulty == EMazeDifficulty::Easy && !HardRooms.IsEmpty() && !HardRooms.Contains(Entry.Key)))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Maze difficulty: %s puzzle assets need nonempty IDs/classes. Easy IDs must match Hard IDs; change only the asset values."), GetSeedDifficultySuffix());
+            return false;
+        }
+    }
+
+    if (EffectiveTrapRoomCount >= 0)
+    {
+        const bool bHasTrapClass = TrapRoomClass && RouteRoomClasses.ContainsByPredicate([this](const TSubclassOf<AMazeActors>& Class)
+            {
+                return IsTrapRoomClass(Class);
+            });
+
+        if (!bHasTrapClass)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Maze difficulty: Assign TrapRoomClass to the trap room Blueprint already in RouteRoomClasses. This is required even for a zero trap target."));
+            return false;
+        }
+        // Reject obvious impossible budgets before starting a generation request.
+        const int32 MainRoomBudget = MaxRouteRooms > 0 ? MaxRouteRooms : FMath::Clamp(MaxHallwaysForward, 1, 100);
+        const bool bHasBranches = bAllowRoomsOnBranches && bAllowJunctions && MaxBranchHallways > 0;
+        const int32 BranchRoomBudget = !bHasBranches ? 0 : (MaxBranchRooms > 0 ? MaxBranchRooms : FMath::Clamp(MaxBranchHallways, 0, 100));
+        if (EffectiveTrapRoomCount > MainRoomBudget + BranchRoomBudget)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Maze difficulty: %d trap rooms cannot fit the current main/branch room budgets. Lower TrapRoomCount or increase the room/hallway budgets."), EffectiveTrapRoomCount);
+            return false;
+        }
+    }
+    return true;
+}
+
+int32 AMazeGenerator::GetActiveEnemyHallwayCount(FName EnemyTag) const
+{
+    return EnemyTag == HangmanEnemyTag ? EffectiveHangmanCount : FMath::Clamp(EnemyHallwayCounts.FindRef(EnemyTag), 0, 16);
+}
+
+bool AMazeGenerator::IsTrapRoomClass(TSubclassOf<AMazeActors> RoomClass) const
+{
+    return RoomClass && TrapRoomClass && RoomClass->IsChildOf(TrapRoomClass.Get());
+}
+
+int32 AMazeGenerator::CountSpawnedTrapRooms() const
+{
+    int32 Count = 0;
+    for (AMazeActors* Piece : SpawnedMazeActors)
+    {
+        if (IsValid(Piece) && IsTrapRoomClass(Piece->GetClass()))
+        {
+            ++Count;
+        }
+    }
+    return Count;
+}
+
+TArray<TSubclassOf<AMazeActors>> AMazeGenerator::GetSelectableRouteRooms(const UClass* PreviousRoomClass, int32 PreviousRoomCount) const
+{
+    TArray<TSubclassOf<AMazeActors>> Available;
+    const bool bTrapTargetReached = EffectiveTrapRoomCount >= 0 && CountSpawnedTrapRooms() >= EffectiveTrapRoomCount;
+    const bool bHasOtherRoomType = RouteRoomClasses.ContainsByPredicate([PreviousRoomClass](const TSubclassOf<AMazeActors>& Class)
+        {
+            return Class && Class.Get() != PreviousRoomClass;
+        });
+
+    for (const TSubclassOf<AMazeActors>& Class : RouteRoomClasses)
+    {
+        if (!Class || (bTrapTargetReached && IsTrapRoomClass(Class)))
+        {
+            continue;
+        }
+
+        // Keep the existing two in a row rule. A slot with no permitted room stays a hallway.
+        if (PreviousRoomCount >= 2 && Class.Get() == PreviousRoomClass && bHasOtherRoomType)
+        {
+            continue;
+        }
+
+        Available.Add(Class);
+    }
+    return Available;
 }
 
 // Called when the game starts or when spawned
 void AMazeGenerator::BeginPlay()
 {
     Super::BeginPlay();
+
+    if (!ApplyDifficultySettings())
+    {
+        return;
+    }
 
     // Zero uses a random seed. A nonzero seed repeats the layout sequence.
     RandomStream.Initialize(RandomSeed == 0 ? FMath::Rand() : RandomSeed);
@@ -314,7 +452,7 @@ void AMazeGenerator::BeginPlay()
 
     // Puzzle progression opens Door1 first, then Door2 and Door3 after escapes.
     CurrentRoomEntranceTag = NAME_None;
-    UnlockedDoorTags = PuzzleRoomsById.IsEmpty() ? DoorTags : TArray<FName>{ DoorTags[0] };
+    UnlockedDoorTags = GetActivePuzzleRooms().IsEmpty() ? DoorTags : TArray<FName>{ DoorTags[0] };
     LoopState = EMazeLoopState::WaitingForDoor;
 
     ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
@@ -412,7 +550,7 @@ bool AMazeGenerator::PrepareEnemyTypes()
     // A positive count needs a matching class. Zero or missing counts leave that type off.
     for (const TPair<FName, int32>& Entry : EnemyHallwayCounts)
     {
-        if (Entry.Key == ChaserEnemyTag || (!WeepingAngelEnemyTag.IsNone() && Entry.Key == WeepingAngelEnemyTag) || Entry.Value <= 0)
+        if (Entry.Key == ChaserEnemyTag || (!WeepingAngelEnemyTag.IsNone() && Entry.Key == WeepingAngelEnemyTag) || GetActiveEnemyHallwayCount(Entry.Key) <= 0)
         {
             continue;
         }
@@ -432,7 +570,7 @@ bool AMazeGenerator::PrepareEnemyTypes()
             continue;
         }
 
-        const int32 Count = Entry.Key == ChaserEnemyTag ? 1 : FMath::Clamp(EnemyHallwayCounts.FindRef(Entry.Key), 0, 16);
+        const int32 Count = Entry.Key == ChaserEnemyTag ? 1 : GetActiveEnemyHallwayCount(Entry.Key);
 
         for (int32 Index = 0; Index < Count; ++Index)
         {
@@ -446,7 +584,7 @@ bool AMazeGenerator::PrepareEnemyTypes()
 
     if (GenerationEnemyTypes.Num() > HallwayCount + BranchCount || (BranchCount == 0 && (GenerationEnemyTypes.Num() - 1) * (EnemySpacing + 1) >= HallwayCount))
     {
-        UE_LOG(LogTemp, Error, TEXT("Maze: Enemy counts or spacing do not fit %d main-route and %d possible branch hallways. Requested enemies: %d. Lower the counts/spacing or increase the hallway budgets."), HallwayCount, BranchCount, GenerationEnemyTypes.Num());
+        UE_LOG(LogTemp, Error, TEXT("Maze: Enemy counts or spacing do not fit %d main route and %d possible branch hallways. Requested enemies: %d. Lower the counts/spacing or increase the hallway budgets."), HallwayCount, BranchCount, GenerationEnemyTypes.Num());
         GenerationEnemyTypes.Reset();
         return false;
     }
@@ -499,7 +637,7 @@ void AMazeGenerator::TrackMazeConnections(AMazeActors* Piece, bool bHallway)
 
         for (UArrowComponent* OtherArrow : GetSortedConnections(Other))
         {
-            // Locked, unused start-room doors are not extra routes into the maze.
+            // Locked, unused start room doors are not extra routes into the maze.
             if (Other == CurrentRoom.Get() && OtherArrow != StartArrow.Get())
             {
                 continue;
@@ -723,12 +861,16 @@ bool AMazeGenerator::IsRouteRoomClass(TSubclassOf<AMazeActors> PieceClass) const
 
 bool AMazeGenerator::ShouldPlaceRouteRoom() const
 {
-    return !RouteRoomClasses.IsEmpty() && GenerationHallwaysSinceRoom >= FMath::Max(1, HallwaysBetweenRooms) && (MaxRouteRooms <= 0 || GenerationRouteRoomCount < MaxRouteRooms);
+    return !RouteRoomClasses.IsEmpty() && GenerationHallwaysSinceRoom >= FMath::Max(1, HallwaysBetweenRooms)
+        && (MaxRouteRooms <= 0 || GenerationRouteRoomCount < MaxRouteRooms)
+        && (EffectiveTrapRoomCount < 0 || !GetSelectableRouteRooms(GenerationLastRouteRoomClass.Get(), GenerationConsecutiveRouteRooms).IsEmpty());
 }
 
 bool AMazeGenerator::ShouldPlaceBranchRoom(const FBranchRoomState& State) const
 {
-    return bAllowRoomsOnBranches && !RouteRoomClasses.IsEmpty() && State.HallwaysSinceRoom >= FMath::Max(1, HallwaysBetweenRooms) && (MaxBranchRooms <= 0 || GenerationBranchRoomCount < MaxBranchRooms);
+    return bAllowRoomsOnBranches && !RouteRoomClasses.IsEmpty() && State.HallwaysSinceRoom >= FMath::Max(1, HallwaysBetweenRooms)
+        && (MaxBranchRooms <= 0 || GenerationBranchRoomCount < MaxBranchRooms)
+        && (EffectiveTrapRoomCount < 0 || !GetSelectableRouteRooms(State.LastRoomClass.Get(), State.ConsecutiveRooms).IsEmpty());
 }
 
 // Spawn one enemy for this hallway instance after layout and navigation are ready.
@@ -741,7 +883,7 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
         return false;
     }
 
-    // Repeated calls cannot create another enemy for an already-filled hallway.
+    // Repeated calls cannot create another enemy for an already filled hallway.
     if (IsValid(SpawnedEnemies[HallwayIndex]))
     {
         return true;
@@ -751,7 +893,7 @@ bool AMazeGenerator::SpawnEnemyInHallway(int32 HallwayIndex, bool bSpawnImmediat
     UArrowComponent* EnemySpawn = FindEnemySpawnPoint(Hallway);
     const FName EnemyType = FindEnemyTypeForSpawnPoint(EnemySpawn);
 
-    // Do not spawn a puzzle-only Angel from a hallway marker.
+    // Do not spawn a puzzle only Angel from a hallway marker.
     if (!WeepingAngelEnemyTag.IsNone() && EnemyType == WeepingAngelEnemyTag)
     {
         UE_LOG(LogTemp, Error, TEXT("Maze: Weeping Angels can only spawn in puzzle rooms, not enemy hallways."));
@@ -1295,7 +1437,7 @@ bool AMazeGenerator::GetFootprints(AMazeActors* Piece, TArray<FBox>& Boxes) cons
             continue;
         }
 
-        // Convert the local box into a world-space footprint.
+        // Convert the local box into a world space footprint.
         const FVector Extent = Box->GetUnscaledBoxExtent();
 
         if (Extent.ContainsNaN() || Box->GetComponentTransform().ContainsNaN() || Extent.X <= 0.0 || Extent.Y <= 0.0 || Extent.Z <= 0.0)
@@ -1430,7 +1572,7 @@ bool AMazeGenerator::PrepareEndCapFootprint()
     EndCapFootprintCorners.Reset();
 
     TArray<UBoxComponent*> Components;
-    // Reserve the same child-actor bounds that the real cap will use.
+    // Reserve the same child actor bounds that the real cap will use.
     Cap->GetComponents<UBoxComponent>(Components, true);
 
     for (UBoxComponent* Box : Components)
@@ -1867,7 +2009,7 @@ void AMazeGenerator::StepMainRoute()
     {
         EndArrow = Exit;
         EndConnectionTransform = Exit->GetComponentTransform();
-        GenerationStage = PuzzleRoomsById.IsEmpty() ? EGenerationStage::EndRoom : EGenerationStage::ExitHallways;
+        GenerationStage = GetActivePuzzleRooms().IsEmpty() ? EGenerationStage::EndRoom : EGenerationStage::ExitHallways;
     }
 }
 
@@ -1875,7 +2017,7 @@ TArray<FName> AMazeGenerator::GetRemainingPuzzleIds() const
 {
     TArray<FName> Remaining;
 
-    for (const auto& Entry : PuzzleRoomsById)
+    for (const auto& Entry : GetActivePuzzleRooms())
     {
         if (!Entry.Key.IsNone() && Entry.Value && !CompletedPuzzleIds.Contains(Entry.Key))
         {
@@ -1890,7 +2032,7 @@ TArray<FName> AMazeGenerator::GetRemainingPuzzleIds() const
 
 bool AMazeGenerator::SelectPuzzleRoom(FName DoorTag)
 {
-    if (PuzzleRoomsById.IsEmpty())
+    if (GetActivePuzzleRooms().IsEmpty())
     {
         ActivePuzzleId = NAME_None;
         ActivePuzzleRoomClass = nullptr;
@@ -1898,15 +2040,15 @@ bool AMazeGenerator::SelectPuzzleRoom(FName DoorTag)
         return true;
     }
 
-    if (PuzzleRoomsById.Num() != 3 || PuzzleRoomExitTag.IsNone() || MazeEndDoorTag.IsNone())
+    if (GetActivePuzzleRooms().Num() != 3 || PuzzleRoomExitTag.IsNone() || MazeEndDoorTag.IsNone())
     {
-        UE_LOG(LogTemp, Error, TEXT("Maze: Assign exactly three different PuzzleRoomsById entries and valid puzzle/end-door tags."));
+        UE_LOG(LogTemp, Error, TEXT("Maze: Assign exactly three different puzzle room entries for the selected difficulty and valid puzzle/end door tags."));
         return false;
     }
 
     TSet<UClass*> RoomClasses;
 
-    for (const auto& Entry : PuzzleRoomsById)
+    for (const auto& Entry : GetActivePuzzleRooms())
     {
         if (Entry.Key.IsNone() || !Entry.Value || RoomClasses.Contains(Entry.Value.Get()) || IsEnemyCorridorClass(Entry.Value) || IsRouteRoomClass(Entry.Value) || CorridorClasses.Contains(Entry.Value))
         {
@@ -1920,13 +2062,13 @@ bool AMazeGenerator::SelectPuzzleRoom(FName DoorTag)
     // A debug rebuild keeps the selected puzzle without removing its recorded completion.
     if (bRebuildingPuzzle)
     {
-        const TSubclassOf<AMazeActors>* RoomClass = PuzzleRoomsById.Find(ActivePuzzleId);
+        const TSubclassOf<AMazeActors>* RoomClass = GetActivePuzzleRooms().Find(ActivePuzzleId);
         return RoomClass && *RoomClass == ActivePuzzleRoomClass;
     }
 
     if (const FName* AssignedPuzzle = DoorPuzzleAssignments.Find(DoorTag))
     {
-        const TSubclassOf<AMazeActors>* RoomClass = PuzzleRoomsById.Find(*AssignedPuzzle);
+        const TSubclassOf<AMazeActors>* RoomClass = GetActivePuzzleRooms().Find(*AssignedPuzzle);
         if (!RoomClass || !*RoomClass) { return false; }
         ActivePuzzleId = *AssignedPuzzle;
         ActivePuzzleRoomClass = *RoomClass;
@@ -1945,7 +2087,7 @@ bool AMazeGenerator::SelectPuzzleRoom(FName DoorTag)
     FRandomStream PuzzleStream;
     PuzzleStream.Initialize(static_cast<int32>(FCrc::StrCrc32(*PuzzleKey)));
     ActivePuzzleId = Remaining[PuzzleStream.RandRange(0, Remaining.Num() - 1)];
-    ActivePuzzleRoomClass = PuzzleRoomsById.FindChecked(ActivePuzzleId);
+    ActivePuzzleRoomClass = GetActivePuzzleRooms().FindChecked(ActivePuzzleId);
     bool bCollecting = false;
 #if WITH_EDITOR
     bCollecting = (bCollectSeedsInEditor || bReplaceSeedBankOnCollection)
@@ -2097,44 +2239,67 @@ void AMazeGenerator::StartAttachment(const FVector& TargetPosition, const FVecto
     }
     else if (bRouteRoom)
     {
-        // Side paths use the room history inherited from their own junction.
-        const bool bBranchRoom = GenerationStage == EGenerationStage::Branches;
-        const UClass* PreviousRoomClass = bBranchRoom ? GenerationBranchRoomState.LastRoomClass.Get() : GenerationLastRouteRoomClass.Get();
-        const int32 PreviousRoomCount = bBranchRoom ? GenerationBranchRoomState.ConsecutiveRooms : GenerationConsecutiveRouteRooms;
-        const int32 RoomNumber = bBranchRoom ? GenerationBranchRoomCount : GenerationRouteRoomCount;
-        int32 RoomIndex = bRandomizeRouteRooms ? RandomStream.RandRange(0, RouteRoomClasses.Num() - 1) : RoomNumber % RouteRoomClasses.Num();
-
-        // After two matching rooms, the next room must use another type.
-        if (PreviousRoomCount >= 2 && RouteRoomClasses[RoomIndex].Get() == PreviousRoomClass)
+        if (EffectiveTrapRoomCount >= 0)
         {
-            TArray<int32> OtherRoomIndices;
-
-            for (int32 Index = 0; Index < RouteRoomClasses.Num(); ++Index)
+            const bool bBranchRoom = GenerationStage == EGenerationStage::Branches;
+            const UClass* PreviousRoomClass = bBranchRoom ? GenerationBranchRoomState.LastRoomClass.Get() : GenerationLastRouteRoomClass.Get();
+            const int32 PreviousRoomCount = bBranchRoom ? GenerationBranchRoomState.ConsecutiveRooms : GenerationConsecutiveRouteRooms;
+            const int32 RoomNumber = bBranchRoom ? GenerationBranchRoomCount : GenerationRouteRoomCount;
+            const TArray<TSubclassOf<AMazeActors>> Available = GetSelectableRouteRooms(PreviousRoomClass, PreviousRoomCount);
+            if (!Available.IsEmpty())
             {
-                if (RouteRoomClasses[Index] && RouteRoomClasses[Index].Get() != PreviousRoomClass)
+                const int32 Index = bRandomizeRouteRooms ? RandomStream.RandRange(0, Available.Num() - 1) : RoomNumber % Available.Num();
+                PendingAttachmentClasses.Add(Available[Index]);
+                if (bRandomizeRouteRooms)
                 {
-                    OtherRoomIndices.Add(Index);
+                    for (const TSubclassOf<AMazeActors>& Class : Available)
+                    {
+                        PendingAttachmentClasses.AddUnique(Class);
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Side paths use the room history inherited from their own junction.
+            const bool bBranchRoom = GenerationStage == EGenerationStage::Branches;
+            const UClass* PreviousRoomClass = bBranchRoom ? GenerationBranchRoomState.LastRoomClass.Get() : GenerationLastRouteRoomClass.Get();
+            const int32 PreviousRoomCount = bBranchRoom ? GenerationBranchRoomState.ConsecutiveRooms : GenerationConsecutiveRouteRooms;
+            const int32 RoomNumber = bBranchRoom ? GenerationBranchRoomCount : GenerationRouteRoomCount;
+            int32 RoomIndex = bRandomizeRouteRooms ? RandomStream.RandRange(0, RouteRoomClasses.Num() - 1) : RoomNumber % RouteRoomClasses.Num();
+
+            // After two matching rooms, the next room must use another type.
+            if (PreviousRoomCount >= 2 && RouteRoomClasses[RoomIndex].Get() == PreviousRoomClass)
+            {
+                TArray<int32> OtherRoomIndices;
+
+                for (int32 Index = 0; Index < RouteRoomClasses.Num(); ++Index)
+                {
+                    if (RouteRoomClasses[Index] && RouteRoomClasses[Index].Get() != PreviousRoomClass)
+                    {
+                        OtherRoomIndices.Add(Index);
+                    }
+                }
+
+                // A maze with only one room type can still generate.
+                if (!OtherRoomIndices.IsEmpty())
+                {
+                    RoomIndex = OtherRoomIndices[bRandomizeRouteRooms ? RandomStream.RandRange(0, OtherRoomIndices.Num() - 1) : 0];
                 }
             }
 
-            // A maze with only one room type can still generate.
-            if (!OtherRoomIndices.IsEmpty())
+            PendingAttachmentClasses.Add(RouteRoomClasses[RoomIndex]);
+            if (bRandomizeRouteRooms)
             {
-                RoomIndex = OtherRoomIndices[bRandomizeRouteRooms ? RandomStream.RandRange(0, OtherRoomIndices.Num() - 1) : 0];
-            }
-        }
-
-        PendingAttachmentClasses.Add(RouteRoomClasses[RoomIndex]);
-        if (bRandomizeRouteRooms)
-        {
-            // A blocked card/trap room can try another permitted type at this same opening.
-            for (const TSubclassOf<AMazeActors>& RoomClass : RouteRoomClasses)
-            {
-                if (RoomClass && (PreviousRoomCount < 2 || RoomClass.Get() != PreviousRoomClass
-                    || !RouteRoomClasses.ContainsByPredicate([PreviousRoomClass](const TSubclassOf<AMazeActors>& Other)
-                        { return Other && Other.Get() != PreviousRoomClass; })))
+                // A blocked card/trap room can try another permitted type at this same opening.
+                for (const TSubclassOf<AMazeActors>& RoomClass : RouteRoomClasses)
                 {
-                    PendingAttachmentClasses.AddUnique(RoomClass);
+                    if (RoomClass && (PreviousRoomCount < 2 || RoomClass.Get() != PreviousRoomClass
+                        || !RouteRoomClasses.ContainsByPredicate([PreviousRoomClass](const TSubclassOf<AMazeActors>& Other)
+                            { return Other && Other.Get() != PreviousRoomClass; })))
+                    {
+                        PendingAttachmentClasses.AddUnique(RoomClass);
+                    }
                 }
             }
         }
@@ -2681,7 +2846,7 @@ void AMazeGenerator::StepGeneration()
 
     case EGenerationStage::StartAttempt:
     {
-        // This one preview spawn uses the same per-frame budget as other candidates.
+        // This one preview spawn uses the same per frame budget as other candidates.
         if (EndCapClass && EndCapFootprintCorners.IsEmpty())
         {
             if (!PrepareEndCapFootprint())
@@ -2705,6 +2870,7 @@ void AMazeGenerator::StepGeneration()
         GenerationExitHallwayIndex = 0;
         GenerationRouteRoomCount = 0;
         GenerationHallwaysSinceRoom = 0;
+        SpawnedTrapRoomCount = 0;
 
         // Every attempt starts from the last successful maze's history.
         GenerationLastRouteRoomClass = LastRouteRoomClass;
@@ -2800,7 +2966,7 @@ void AMazeGenerator::StepGeneration()
             return;
         }
 
-        // Keep extra exit hallways ordinary. Enemies use the main-route and branch budgets.
+        // Keep extra exit hallways ordinary. Enemies use the main route and branch budgets.
         if (!bAttachmentPending)
         {
             StartAttachment(EndArrow->GetComponentLocation(), EndArrow->GetForwardVector(), 2, 2, false);
@@ -2898,6 +3064,11 @@ void AMazeGenerator::StepGeneration()
             InitializeRoom(SpawnedEndRoom);
             IMazeInterface::Execute_SetMazeDoorLocked(SpawnedEndRoom, MazeEndDoorTag, true);
 
+            if (Puzzle->bUsePressureButtons)
+            {
+                Puzzle->WeepingAngelCount = FMath::Clamp(GetActiveDifficultySettings().PressurePlateWeepingAngelCount, 1, 16);
+            }
+
             if (!Puzzle->PreparePuzzle(this, ActivePuzzleId, EnemyClassesByTag.FindRef(WeepingAngelEnemyTag), RandomStream.RandRange(1, MAX_int32), bSpawnAllPuzzleButtons, bSpawnAllPuzzleWeepingAngels))
             {
                 BeginGenerationCleanup(false);
@@ -2924,6 +3095,17 @@ void AMazeGenerator::StepGeneration()
 
     // All pieces and caps are placed before the navigation volume is resized.
     case EGenerationStage::NavigationBounds:
+        // Count accepted actors, including branches. Backtracking/cleanup cannot leave stale counters.
+        SpawnedTrapRoomCount = CountSpawnedTrapRooms();
+        if (EffectiveTrapRoomCount >= 0 && SpawnedTrapRoomCount != EffectiveTrapRoomCount)
+        {
+            if (bLogRejectedCandidates)
+            {
+                UE_LOG(LogTemp, Display, TEXT("Maze: Retrying layout with %d/%d required trap rooms."), SpawnedTrapRoomCount, EffectiveTrapRoomCount);
+            }
+            BeginGenerationCleanup(true);
+            return;
+        }
         if (!IsValid(CurrentRoom) || !IsValid(NextRoom) || GenerationEnemyTypes.IsEmpty() || SpawnedEnemyHallwayActors.Num() != GenerationEnemyTypes.Num() || !UpdateMazeNavigationBounds())
         {
             BeginGenerationCleanup(false);
@@ -2955,7 +3137,7 @@ void AMazeGenerator::StepGeneration()
 
         if (GenerationEnemySpawnIndex == GenerationEnemyTypes.Num())
         {
-            GenerationStage = PuzzleRoomsById.IsEmpty() ? EGenerationStage::Complete : EGenerationStage::PuzzleEnemies;
+            GenerationStage = GetActivePuzzleRooms().IsEmpty() ? EGenerationStage::Complete : EGenerationStage::PuzzleEnemies;
         }
 
         return;
@@ -3173,7 +3355,7 @@ void AMazeGenerator::StepCaps()
 
             // Finish only after the main route, destination room, and all caps succeed.
             bMainRouteComplete = true;
-            GenerationStage = PuzzleRoomsById.IsEmpty() ? EGenerationStage::NavigationBounds : EGenerationStage::PuzzleButtons;
+            GenerationStage = GetActivePuzzleRooms().IsEmpty() ? EGenerationStage::NavigationBounds : EGenerationStage::PuzzleButtons;
             return;
         }
 
@@ -3552,7 +3734,7 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         ApplyDoorLocks(CurrentRoom, TArray<FName>{});
         ApplyDoorLocks(NextRoom, TArray<FName>{});
 
-        UE_LOG(LogTemp, Display, TEXT("Maze: %d main-route hallways and %d branch hallways generated, including %d enemy hallways across both paths. Navigation ready; all side openings closed."), GenerationHallwayCount, GenerationBranchCount, SpawnedEnemyHallwayActors.Num());
+        UE_LOG(LogTemp, Display, TEXT("Maze: %d main route hallways and %d branch hallways generated, including %d enemy hallways across both paths. Navigation ready; all side openings closed."), GenerationHallwayCount, GenerationBranchCount, SpawnedEnemyHallwayActors.Num());
         UE_LOG(LogTemp, Display, TEXT("Maze: Ready in %.2fs (target %.2fs; navigation/final setup %.2fs). Attempts: %d. Local repairs: %d."), LastGenerationSeconds, TargetGenerationSeconds, NavigationSeconds, LastGenerationAttempts, LastGenerationBacktracks);
     }
     else
@@ -3579,7 +3761,7 @@ void AMazeGenerator::FinishGeneration(bool bSuccess)
         }
 
         // With no assigned/playable steam, complete immediately instead of
-        // leaving the player locked out. Otherwise allow the short steam lead-in.
+        // leaving the player locked out. Otherwise allow the short steam lead in.
         CheckDoorGenerationSteamLeadIn();
         return;
     }
@@ -3647,7 +3829,7 @@ bool AMazeGenerator::ValidateRoom(AMazeActors* Room, FName IncomingDoorTag) cons
 
     if (!IsValid(Room))
     {
-        return LogFailure(TEXT("The assigned start-room actor is missing or invalid."));
+        return LogFailure(TEXT("The assigned start room actor is missing or invalid."));
     }
 
     if (DoorTags.Num() != 3)
@@ -3825,7 +4007,7 @@ bool AMazeGenerator::IsDoorUnlocked(AMazeActors* Room, FName DoorTag) const
 
     if (LoopState == EMazeLoopState::TraversingMaze)
     {
-        if (!PuzzleRoomsById.IsEmpty() && Room == SpawnedEndRoom && DoorTag == MazeEndDoorTag)
+        if (!GetActivePuzzleRooms().IsEmpty() && Room == SpawnedEndRoom && DoorTag == MazeEndDoorTag)
         {
             return bCurrentPuzzleCompleted;
         }
@@ -3884,6 +4066,11 @@ bool AMazeGenerator::ChooseDoor(AMazeActors* Room, FName DoorTag)
     }
 
     if (LoopState != EMazeLoopState::WaitingForDoor || !IsDoorUnlocked(Room, DoorTag))
+    {
+        return false;
+    }
+
+    if (!ApplyDifficultySettings())
     {
         return false;
     }
@@ -4105,7 +4292,7 @@ bool AMazeGenerator::PlayerEnteredNextRoom(AMazeActors* Room, APawn* Player)
     }
 
     // Escaping cannot advance to another door until this maze's puzzle is solved.
-    if (!PuzzleRoomsById.IsEmpty() && !bCurrentPuzzleCompleted)
+    if (!GetActivePuzzleRooms().IsEmpty() && !bCurrentPuzzleCompleted)
     {
         return false;
     }
@@ -4147,11 +4334,11 @@ bool AMazeGenerator::PlayerEnteredNextRoom(AMazeActors* Room, APawn* Player)
     ChosenDoorTag = NAME_None;
 
     // Each escape unlocks another choice and keeps the earlier choices available.
-    // The old two-choice behavior remains available when no puzzle rooms are assigned.
-    const bool bAllPuzzlesEscaped = !PuzzleRoomsById.IsEmpty() && CompletedPuzzleIds.Num() == 3;
+    // The old two choice behavior remains available when no puzzle rooms are assigned.
+    const bool bAllPuzzlesEscaped = !GetActivePuzzleRooms().IsEmpty() && CompletedPuzzleIds.Num() == 3;
     UnlockedDoorTags = NextRoomUnlockedDoorTags;
 
-    if (!PuzzleRoomsById.IsEmpty())
+    if (!GetActivePuzzleRooms().IsEmpty())
     {
         UnlockedDoorTags.Reset();
 
@@ -4167,7 +4354,7 @@ bool AMazeGenerator::PlayerEnteredNextRoom(AMazeActors* Room, APawn* Player)
     ActivePuzzleId = NAME_None;
     ActivePuzzleRoomClass = nullptr;
     bCurrentPuzzleCompleted = false;
-    RoomsCompleted = PuzzleRoomsById.IsEmpty() ? RoomsCompleted + 1 : CompletedPuzzleIds.Num();
+    RoomsCompleted = GetActivePuzzleRooms().IsEmpty() ? RoomsCompleted + 1 : CompletedPuzzleIds.Num();
     LoopState = bAllPuzzlesEscaped ? EMazeLoopState::Completed : EMazeLoopState::WaitingForDoor;
     ApplyDoorLocks(CurrentRoom, UnlockedDoorTags);
 
@@ -4353,6 +4540,10 @@ bool AMazeGenerator::CanSaveAtCurrentStartRoom(APawn* Player) const
 // Loading starts with an empty layout. The normal door flow creates the next maze later.
 bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
 {
+    if (!ApplyDifficultySettings())
+    {
+        return false;
+    }
     UClass* RoomClass = Data.RoomClass.LoadSynchronous();
 
     if (!Data.bValid || !GetWorld() || !RoomClass || Data.RoomsCompleted < 0 || Data.RoomTransform.ContainsNaN() || Data.PlayerTransform.ContainsNaN() || Data.UnlockedDoorTags.IsEmpty())
@@ -4368,13 +4559,13 @@ bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
         }
     }
 
-    if (!PuzzleRoomsById.IsEmpty())
+    if (!GetActivePuzzleRooms().IsEmpty())
     {
         TArray<FName> UniquePuzzles;
 
         for (const FName& PuzzleId : Data.CompletedPuzzleIds)
         {
-            if (!PuzzleRoomsById.Contains(PuzzleId) || UniquePuzzles.Contains(PuzzleId))
+            if (!GetActivePuzzleRooms().Contains(PuzzleId) || UniquePuzzles.Contains(PuzzleId))
             {
                 return false;
             }
@@ -4391,7 +4582,7 @@ bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
     TArray<FName> AssignedPuzzleIds;
     for (const auto& Assignment : Data.DoorPuzzleAssignments)
     {
-        if (!DoorTags.Contains(Assignment.Key) || !PuzzleRoomsById.Contains(Assignment.Value) || AssignedPuzzleIds.Contains(Assignment.Value)) { return false; }
+        if (!DoorTags.Contains(Assignment.Key) || !GetActivePuzzleRooms().Contains(Assignment.Value) || AssignedPuzzleIds.Contains(Assignment.Value)) { return false; }
         AssignedPuzzleIds.Add(Assignment.Value);
     }
     for (const FName& PuzzleId : Data.CompletedPuzzleIds)
@@ -4406,7 +4597,7 @@ bool AMazeGenerator::RestoreStartRoomState(const FMazeStartRoomSaveData& Data)
     AMazeActors* PreviousRoom = CurrentRoom;
     AMazeActors* RestoredRoom = nullptr;
 
-    // Keep placed-instance settings when restoring the original start room.
+    // Keep placed instance settings when restoring the original start room.
     if (Data.RoomsCompleted == 0 && IsValid(InitialStartRoom) && InitialStartRoom->GetClass() == RoomClass)
     {
         RestoredRoom = InitialStartRoom;

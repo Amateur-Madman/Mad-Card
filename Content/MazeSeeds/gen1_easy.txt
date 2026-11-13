@@ -1,0 +1,17 @@
+MAD_CARD_SEEDS|5|PressurePlates|easy|16|51BE324E
+8|PressurePlates||0|1.121474|772F4488
+16|PressurePlates|BP_CardRoom|1|0.893984|DD112A57
+19|PressurePlates|BP_TrapRoom|2|1.034057|DD112A57
+30|PressurePlates||0|0.957511|DD112A57
+41|PressurePlates|BP_CardRoom|2|0.994122|DD112A57
+84|PressurePlates|BP_TrapRoom|1|1.020680|DD112A57
+147|PressurePlates|BP_CardRoom|1|0.912392|823F17A2
+170|PressurePlates|BP_TrapRoom|1|0.898681|823F17A2
+171|PressurePlates|BP_TrapRoom|2|1.035601|823F17A2
+206|PressurePlates||0|0.959452|823F17A2
+207|PressurePlates|BP_CardRoom|2|0.995303|823F17A2
+236|PressurePlates||0|1.005441|0B2CA255
+237|PressurePlates|BP_CardRoom|1|0.959330|0B2CA255
+239|PressurePlates|BP_TrapRoom|1|0.998450|0B2CA255
+279|PressurePlates|BP_CardRoom|2|0.978834|0B2CA255
+280|PressurePlates|BP_TrapRoom|2|0.982788|0B2CA255
