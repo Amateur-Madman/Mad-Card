@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "TimerManager.h"
+#include "Enviornment/MazeSaveGame.h"
 #include "MazeGenerator.generated.h"
 
 class AMazeActors;
@@ -38,6 +39,29 @@ enum class EMazeLoopState : uint8
     Completed
 };
 
+// Each difficulty has its own counts and puzzle room assets.
+USTRUCT(BlueprintType)
+struct AM_2610_API FMazeGeneratorDifficultySettings
+{
+    GENERATED_BODY()
+
+    // Negative one: Hard uses the existing enemy count map; Easy uses half of Hard (rounded down).
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Difficulty", meta = (ClampMin = "-1", ClampMax = "16"))
+    int32 HangmanCount = -1;
+
+    // Exact total across the main route AND branches. Negative one keeps the original room selection.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Difficulty", meta = (ClampMin = "-1", ClampMax = "100"))
+    int32 TrapRoomCount = -1;
+
+    // Applied only to components that use the pressure plate puzzle.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Difficulty", meta = (ClampMin = "1", ClampMax = "16"))
+    int32 PressurePlateWeepingAngelCount = 3;
+
+    // Use the same three stable puzzle IDs in Easy and Hard; assign their matching room assets.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Difficulty")
+    TMap<FName, TSubclassOf<AMazeActors>> PuzzleRoomsById;
+};
+
 UCLASS()
 class AM_2610_API AMazeGenerator : public AActor
 {
@@ -45,6 +69,35 @@ class AM_2610_API AMazeGenerator : public AActor
 
 public:
     AMazeGenerator();
+
+    // Easy defaults to one trap room, half the current Hard hangmen, and one pressure plate Angel.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Difficulty|Easy")
+    FMazeGeneratorDifficultySettings EasySettings;
+
+    // Negative one preserves the existing Hard counts. Assign all three Hard puzzle room assets here.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Difficulty|Hard")
+    FMazeGeneratorDifficultySettings HardSettings;
+
+    // Match the Hangman type tag already used in EnemyClassesByTag and on its spawn arrows.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Difficulty|Setup")
+    FName HangmanEnemyTag = TEXT("EnemyHangman");
+
+    // Assign the common trap room Blueprint (or its parent); child variants also count as traps.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Difficulty|Setup")
+    TSubclassOf<AMazeActors> TrapRoomClass;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Difficulty|Active")
+    EMazeDifficulty ActiveDifficulty = EMazeDifficulty::Hard;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Difficulty|Active")
+    int32 EffectiveHangmanCount = 0;
+
+    // Negative one means the existing random trap room placement is in use.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Difficulty|Active")
+    int32 EffectiveTrapRoomCount = -1;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Result")
+    int32 SpawnedTrapRoomCount = 0;
 
     // Derived from the saved run ID. New runs vary; checkpoint retries keep the same choices.
     void SetPuzzleRunSeed(int32 InSeed) { PuzzleRunSeed = InSeed == 0 ? 1 : InSeed; }
@@ -100,7 +153,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Navigation", meta = (ClampMin = "1.0", Units = "s"))
     float NavigationBuildTimeout = 30.0f;
 
-    // Measured world-space size of all accepted maze pieces.
+    // Measured world space size of all accepted maze pieces.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Navigation")
     FVector GeneratedMazeSize = FVector::ZeroVector;
 
@@ -113,7 +166,7 @@ public:
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Maze|Audio", meta = (DisplayName = "Maze Reverb Volume"))
     TObjectPtr<AAudioVolume> MazeReverbVolume = nullptr;
 
-    // One safe player-capsule position inside both BP_Start and BP_Start_Next.
+    // One safe player capsule position inside both BP_Start and BP_Start_Next.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Saving")
     FName PlayerRespawnTag = TEXT("PlayerRespawn");
 
@@ -125,7 +178,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Rooms")
     FName EndRoomExitTag = TEXT("ToNextStartRoom");
 
-    // Duplicate start-room Blueprint.
+    // Duplicate start room Blueprint.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Rooms")
     TSubclassOf<AMazeActors> NextStartRoomClass;
 
@@ -185,7 +238,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Branches", meta = (ClampMin = "0", ClampMax = "10"))
     int32 MaxBranchRooms = 2;
 
-    // Allow T-cross and four-way pieces along the main route.
+    // Allow T cross and four way pieces along the main route.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Branches")
     bool bAllowJunctions = true;
 
@@ -262,7 +315,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds")
     bool bRequireSavedSeeds = false;
 
-    // Three files directly in MazeSeeds. Maximum total entries per puzzle file; at least 16.
+    // Three files per difficulty in MazeSeeds: gen1_easy.txt ... gen3_hard.txt. At least 16 entries per file.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Seeds", meta = (ClampMin = "16", ClampMax = "1000"))
     int32 MaxSavedSeedsPerPuzzle = 50;
 
@@ -361,31 +414,26 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Rooms")
     TSubclassOf<AMazeActors> EndRoomClass;
 
-    // Three different puzzle rooms, each with a stable ID for completed-puzzle tracking.
-    // Leave empty to use the existing maze flow without puzzle progression.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
-    TMap<FName, TSubclassOf<AMazeActors>> PuzzleRoomsById;
-
     // The puzzle room's exit connects to hallways before BP_Exit and BP_Start_Next.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
     FName PuzzleRoomExitTag = TEXT("ToMazeExit");
 
-    // Choose a random puzzle position while leaving main-route hallways on both sides.
+    // Choose a random puzzle position while leaving main route hallways on both sides.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles", meta = (ClampMin = "1", ClampMax = "100"))
     int32 MinHallwaysBeforePuzzle = 3;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles", meta = (ClampMin = "1", ClampMax = "100"))
     int32 MinHallwaysAfterPuzzle = 6;
 
-    // Add extra hallways at the end of the route to keep space before the exit/start-room pair.
+    // Add extra hallways at the end of the route to keep space before the exit/start room pair.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles", meta = (ClampMin = "1", ClampMax = "20"))
     int32 HallwaysAfterPuzzle = 3;
 
-    // Puzzle-only enemy type. Keep its pawn Blueprint assigned in EnemyClassesByTag.
+    // Puzzle only enemy type. Keep its pawn Blueprint assigned in EnemyClassesByTag.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
     FName WeepingAngelEnemyTag = TEXT("EnemyWeepingAngel");
 
-    // BP_Exit forwards this tag to its actual end-door Blueprint.
+    // BP_Exit forwards this tag to its actual end door Blueprint.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Puzzles")
     FName MazeEndDoorTag = TEXT("EndDoor");
 
@@ -454,15 +502,15 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Maze|Loop")
     int32 RoomsCompleted = 0;
 
-    // Both start-room types use this feedback at the selected doorway's tagged arrow.
+    // Both start room types use this feedback at the selected doorway's tagged arrow.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio")
     bool bEnableDoorGenerationAudio = true;
 
-    // One non-looping heavy lock/bolt clip. Every playback gets a new pitch.
+    // One non looping heavy lock/bolt clip. Every playback gets a new pitch.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (DisplayName = "Mechanical Lock Sound"))
     TObjectPtr<USoundBase> GenerationClickSound = nullptr;
 
-    // One non-looping airlock release. Pitch changes on each successful generation.
+    // One non looping airlock release. Pitch changes on each successful generation.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Maze|Door Audio", meta = (DisplayName = "Airlock Steam Sound"))
     TObjectPtr<USoundBase> GenerationReadySteamSound = nullptr;
 
@@ -538,6 +586,16 @@ protected:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+    EMazeDifficulty ResolveRunDifficulty() const;
+    const FMazeGeneratorDifficultySettings& GetActiveDifficultySettings() const;
+    const TMap<FName, TSubclassOf<AMazeActors>>& GetActivePuzzleRooms() const;
+    const TCHAR* GetSeedDifficultySuffix() const;
+    bool ApplyDifficultySettings();
+    int32 GetActiveEnemyHallwayCount(FName EnemyTag) const;
+    bool IsTrapRoomClass(TSubclassOf<AMazeActors> RoomClass) const;
+    int32 CountSpawnedTrapRooms() const;
+    TArray<TSubclassOf<AMazeActors>> GetSelectableRouteRooms(const UClass* PreviousRoomClass, int32 PreviousRoomCount) const;
+
     struct FSeedBankEntry
     {
         FName PuzzleId = NAME_None;
@@ -570,7 +628,7 @@ private:
     TArray<FSeedCollectionBucket> SeedCollectionBuckets;
     TArray<FSeedCollectionSetup> SeedCollectionSetups;
 
-    // The live room stays in place while a separate next-room preview is tested in PIE.
+    // The live room stays in place while a separate next room preview is tested in PIE.
     UPROPERTY(Transient)
     TObjectPtr<AMazeActors> SeedCollectionSourceRoom = nullptr;
 
@@ -766,7 +824,7 @@ private:
     int32 GenerationAttemptLimit = 0;
     int32 GenerationHallwayIndex = 0;
     int32 GenerationHallwayCount = 0;
-    // Insert the puzzle after this many main-route hallways without using a hallway slot.
+    // Insert the puzzle after this many main route hallways without using a hallway slot.
     int32 GenerationPuzzleHallwayIndex = 0;
     int32 GenerationExitHallwayCount = 0;
     int32 GenerationExitHallwayIndex = 0;
@@ -946,7 +1004,7 @@ private:
     void JoinMatchingOpenConnections();
     void AddUnusedConnections(AMazeActors* Piece, UArrowComponent* Entrance, UArrowComponent* ReservedExit);
 
-    // Main-route and branch placements share the same remaining enemy counts.
+    // Main route and branch placements share the same remaining enemy counts.
     TArray<FName> GenerationEnemyTypes;
     TArray<FName> GenerationRemainingEnemyTypes;
 

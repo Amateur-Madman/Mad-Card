@@ -1,4 +1,4 @@
-// Editor seed collection and packaged seed-bank playback. No UnrealEd module dependency.
+// Editor seed collection and packaged seed bank playback. No UnrealEd module dependency.
 
 #include "Enviornment/MazeGenerator.h"
 #include "Enviornment/MazeActors.h"
@@ -60,7 +60,7 @@ FString AMazeGenerator::BuildSeedBankProfile(AMazeActors* Room, FName DoorTag, F
 
     // World position is deliberately excluded: later start rooms move through the level.
     const FTransform Anchor(FRotator(0.0f, Door->GetForwardVector().Rotation().Yaw, 0.0f), Door->GetComponentLocation());
-    FString Settings = TEXT("MadCardSeedReplay=4\n");
+    FString Settings = TEXT("MadCardSeedReplay=5\n");
     const auto AddInt = [&Settings](const TCHAR* Name, int32 Value)
         { Settings += FString::Printf(TEXT("%s=%d\n"), Name, Value); };
     const auto AddFloat = [&Settings](const TCHAR* Name, float Value)
@@ -72,7 +72,7 @@ FString AMazeGenerator::BuildSeedBankProfile(AMazeActors* Room, FName DoorTag, F
     Settings += TEXT("Door=") + DoorTag.ToString() + TEXT("\nIncoming=") + EntranceDoorTag.ToString() + TEXT("\n");
 
     TArray<FString> Geometry;
-    // Hash the actual box corners in doorway space, before world-axis expansion.
+    // Hash the actual box corners in doorway space, before world axis expansion.
     // Moving or rotating a later start room must not create another setup profile.
     TArray<UBoxComponent*> ProfileBounds;
     Room->GetComponents<UBoxComponent>(ProfileBounds, true);
@@ -105,6 +105,11 @@ FString AMazeGenerator::BuildSeedBankProfile(AMazeActors* Room, FName DoorTag, F
     Geometry.Sort();
     for (const FString& Line : Geometry) { Settings += Line + TEXT("\n"); }
 
+    // Both the selected difficulty and its effective settings are part of seed compatibility.
+    Settings += TEXT("Difficulty=") + FString(GetSeedDifficultySuffix()) + TEXT("\n");
+    AddInt(TEXT("TrapRoomTarget"), EffectiveTrapRoomCount);
+    AddInt(TEXT("PressurePlateAngels"), GetActiveDifficultySettings().PressurePlateWeepingAngelCount);
+    AddClass(TEXT("TrapRoomClass"), TrapRoomClass.Get());
     AddInt(TEXT("Hallways"), MaxHallwaysForward);
     AddInt(TEXT("MaxRooms"), MaxRouteRooms);
     AddInt(TEXT("RoomSpacing"), HallwaysBetweenRooms);
@@ -144,12 +149,13 @@ FString AMazeGenerator::BuildSeedBankProfile(AMazeActors* Room, FName DoorTag, F
         Settings += TEXT("Enemy=") + Tag.ToString() + TEXT(":") + SeedClassPath(EnemyClassesByTag.FindRef(Tag).Get()) + TEXT("\n");
     }
     ProfileTags.Reset(); EnemyHallwayCounts.GetKeys(ProfileTags);
+    ProfileTags.AddUnique(HangmanEnemyTag);
     ProfileTags.Sort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
-    for (const FName& Tag : ProfileTags) { Settings += FString::Printf(TEXT("Count=%s:%d\n"), *Tag.ToString(), EnemyHallwayCounts.FindRef(Tag)); }
-    ProfileTags.Reset(); PuzzleRoomsById.GetKeys(ProfileTags);
+    for (const FName& Tag : ProfileTags) { Settings += FString::Printf(TEXT("Count=%s:%d\n"), *Tag.ToString(), GetActiveEnemyHallwayCount(Tag)); }
+    ProfileTags.Reset(); GetActivePuzzleRooms().GetKeys(ProfileTags);
     ProfileTags.Sort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
-    for (const FName& Tag : ProfileTags) { Settings += TEXT("Puzzle=") + Tag.ToString() + TEXT(":") + SeedClassPath(PuzzleRoomsById.FindRef(Tag).Get()) + TEXT("\n"); }
-    Settings += TEXT("Tags=") + ChaserEnemyTag.ToString() + TEXT("|") + ChaserSpawnTriggerTag.ToString()
+    for (const FName& Tag : ProfileTags) { Settings += TEXT("Puzzle=") + Tag.ToString() + TEXT(":") + SeedClassPath(GetActivePuzzleRooms().FindRef(Tag).Get()) + TEXT("\n"); }
+    Settings += TEXT("Tags=") + HangmanEnemyTag.ToString() + TEXT("|") + ChaserEnemyTag.ToString() + TEXT("|") + ChaserSpawnTriggerTag.ToString()
         + TEXT("|") + WeepingAngelEnemyTag.ToString() + TEXT("|") + PuzzleRoomExitTag.ToString()
         + TEXT("|") + EndRoomExitTag.ToString() + TEXT("|") + NextRoomEntranceDoorTag.ToString()
         + TEXT("|") + MazeEndDoorTag.ToString() + TEXT("\n");
@@ -161,13 +167,13 @@ TArray<FName> AMazeGenerator::GetSeedFilePuzzleIds() const
     TArray<FName> PuzzleIds = SeedFilePuzzleIds;
     if (PuzzleIds.IsEmpty())
     {
-        PuzzleRoomsById.GetKeys(PuzzleIds);
+        GetActivePuzzleRooms().GetKeys(PuzzleIds);
         PuzzleIds.Sort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
     }
     if (PuzzleIds.Num() != 3) { return {}; }
     for (int32 Index = 0; Index < PuzzleIds.Num(); ++Index)
     {
-        if (PuzzleIds[Index].IsNone() || !PuzzleRoomsById.Contains(PuzzleIds[Index])) { return {}; }
+        if (PuzzleIds[Index].IsNone() || !GetActivePuzzleRooms().Contains(PuzzleIds[Index])) { return {}; }
         for (int32 Other = 0; Other < Index; ++Other)
         {
             if (PuzzleIds[Other] == PuzzleIds[Index]) { return {}; }
@@ -184,10 +190,10 @@ bool AMazeGenerator::SetSeedBankPuzzleFile(FName PuzzleId)
         if (PuzzleIds[Index] != PuzzleId) { continue; }
         SeedBankFilePuzzleId = PuzzleId;
         CurrentSeedBankFile = FPaths::Combine(FPaths::ProjectContentDir(), TEXT("MazeSeeds"),
-            FString::Printf(TEXT("gen %d.txt"), Index + 1));
+            FString::Printf(TEXT("gen%d_%s.txt"), Index + 1, GetSeedDifficultySuffix()));
         return true;
     }
-    UE_LOG(LogTemp, Error, TEXT("Maze seeds: Assign three different SeedFilePuzzleIds matching PuzzleRoomsById, or leave the list empty for alphabetical order."));
+    UE_LOG(LogTemp, Error, TEXT("Maze seeds: Assign three different SeedFilePuzzleIds matching the selected difficulty puzzle room map, or leave the list empty for alphabetical order."));
     return false;
 }
 
@@ -219,8 +225,9 @@ bool AMazeGenerator::LoadPuzzleSeedBankFile(bool bRequired)
     TArray<FString> Header;
     if (!Lines.IsEmpty()) { Lines[0].ParseIntoArray(Header, TEXT("|"), false); }
     int32 ExpectedCount = 0;
-    if (Header.Num() != 5 || Header[0] != TEXT("MAD_CARD_SEEDS") || Header[1] != TEXT("4")
-        || Header[2] != SeedBankFilePuzzleId.ToString() || !LexTryParseString(ExpectedCount, *Header[3])
+    if (Header.Num() != 6 || Header[0] != TEXT("MAD_CARD_SEEDS") || Header[1] != TEXT("5")
+        || Header[2] != SeedBankFilePuzzleId.ToString() || Header[3] != GetSeedDifficultySuffix()
+        || !LexTryParseString(ExpectedCount, *Header[4])
         || ExpectedCount < 0 || ExpectedCount > 1000 || Lines.Num() != ExpectedCount + 1)
     {
         UE_LOG(LogTemp, Error, TEXT("Maze seeds: Invalid, incomplete, or incompatible file %s. It was not overwritten."), *CurrentSeedBankFile);
@@ -228,7 +235,7 @@ bool AMazeGenerator::LoadPuzzleSeedBankFile(bool bRequired)
     }
     FString Body;
     for (int32 Index = 1; Index < Lines.Num(); ++Index) { Body += Lines[Index] + TEXT("\n"); }
-    if (Header[4] != FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Body)))
+    if (Header[5] != FString::Printf(TEXT("%08X"), FCrc::StrCrc32(*Body)))
     {
         UE_LOG(LogTemp, Error, TEXT("Maze seeds: Checksum mismatch in %s. It was not overwritten."), *CurrentSeedBankFile);
         return false;
@@ -266,12 +273,12 @@ bool AMazeGenerator::LoadPuzzleSeedBankFile(bool bRequired)
             }
             if (Matches != 1)
             {
-                UE_LOG(LogTemp, Error, TEXT("Maze seeds: Unknown or ambiguous room label in %s. Use unique route-room Blueprint names or recollect with full paths."), *CurrentSeedBankFile);
+                UE_LOG(LogTemp, Error, TEXT("Maze seeds: Unknown or ambiguous room label in %s. Use unique route room Blueprint names or recollect with full paths."), *CurrentSeedBankFile);
                 SeedBankEntries.Reset(); return false;
             }
             Entry.PreviousRoomClass = ResolvedClass;
         }
-        if (Entry.PuzzleId != SeedBankFilePuzzleId || !PuzzleRoomsById.Contains(Entry.PuzzleId)
+        if (Entry.PuzzleId != SeedBankFilePuzzleId || !GetActivePuzzleRooms().Contains(Entry.PuzzleId)
             || (Entry.PreviousRoomClass.IsEmpty() != (Entry.PreviousRoomCount == 0))
             || (bKnownProfile && !Entry.PreviousRoomClass.IsEmpty() && !RouteRoomClasses.ContainsByPredicate([&Entry](const TSubclassOf<AMazeActors>& Class)
                 { return SeedClassPath(Class.Get()) == Entry.PreviousRoomClass; }))
@@ -323,15 +330,15 @@ bool AMazeGenerator::WriteSeedBankFile()
             *EscapeSeedField(Entry.PuzzleId.ToString()), *EscapeSeedField(RoomField), Entry.PreviousRoomCount, Entry.Seconds, *Entry.Profile);
     }
     if (FileEntryCount > FMath::Clamp(MaxSavedSeedsPerPuzzle, 16, 1000)) { return false; }
-    const FString Text = FString::Printf(TEXT("MAD_CARD_SEEDS|4|%s|%d|%08X\n"),
-        *SeedBankFilePuzzleId.ToString(), FileEntryCount, FCrc::StrCrc32(*Body)) + Body;
+    const FString Text = FString::Printf(TEXT("MAD_CARD_SEEDS|5|%s|%s|%d|%08X\n"),
+        *SeedBankFilePuzzleId.ToString(), GetSeedDifficultySuffix(), FileEntryCount, FCrc::StrCrc32(*Body)) + Body;
     const FString Temporary = CurrentSeedBankFile + TEXT(".tmp");
     IFileManager& Files = IFileManager::Get();
     if (!Files.MakeDirectory(*FPaths::GetPath(CurrentSeedBankFile), true)
         || !FFileHelper::SaveStringToFile(Text, *Temporary, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM)
         || !Files.Move(*CurrentSeedBankFile, *Temporary, true, false, false, true))
     {
-        UE_LOG(LogTemp, Error, TEXT("Maze seeds: Could not save %s. Check folder permissions/source-control read-only files. Collection stopped."), *CurrentSeedBankFile);
+        UE_LOG(LogTemp, Error, TEXT("Maze seeds: Could not save %s. Check folder permissions/source control read only files. Collection stopped."), *CurrentSeedBankFile);
         return false;
     }
     return true;
@@ -351,7 +358,7 @@ bool AMazeGenerator::PrepareSeedCollectionSetups(AMazeActors* Room, FName DoorTa
         || DoorTags.Num() != 3 || DoorTag != DoorTags[0] || !NextStartRoomClass
         || NextRoomEntranceDoorTag.IsNone() || DoorTags.Contains(NextRoomEntranceDoorTag))
     {
-        SeedCollectionStatus = TEXT("Start full-loop collection from Door1 in the original start room in a fresh PIE session.");
+        SeedCollectionStatus = TEXT("Start full loop collection from Door1 in the original start room in a fresh PIE session.");
         UE_LOG(LogTemp, Error, TEXT("Maze seeds: %s"), *SeedCollectionStatus);
         return false;
     }
@@ -377,7 +384,7 @@ bool AMazeGenerator::PrepareSeedCollectionSetups(AMazeActors* Room, FName DoorTa
     FActorSpawnParameters Parameters;
     Parameters.Owner = this;
     Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    // Keep temporary next-room tests away from the live room and player.
+    // Keep temporary next room tests away from the live room and player.
     SeedCollectionPreviewRoom = GetWorld()->SpawnActor<AMazeActors>(NextStartRoomClass,
         Room->GetActorLocation() + FVector(0.0, 0.0, 100000.0), FRotator::ZeroRotator, Parameters);
     if (!IsValid(SeedCollectionPreviewRoom) || !ValidateRoom(SeedCollectionPreviewRoom, NextRoomEntranceDoorTag))
@@ -422,15 +429,15 @@ bool AMazeGenerator::PrepareSeedCollectionBuckets()
     const int32 HistoryVariants = 1 + HistoryClasses.Num() * 2;
     const int32 BucketsPerPuzzle = 1 + (SeedCollectionSetups.Num() - 1) * HistoryVariants;
     const int32 FileCap = FMath::Clamp(MaxSavedSeedsPerPuzzle, 16, 1000);
-    if (SeedCollectionSetups.Num() != 4 || FileCap < BucketsPerPuzzle || PuzzleRoomsById.Num() != 3
+    if (SeedCollectionSetups.Num() != 4 || FileCap < BucketsPerPuzzle || GetActivePuzzleRooms().Num() != 3
         || bSpawnAllPuzzleButtons || bSpawnAllPuzzleWeepingAngels)
     {
-        SeedCollectionStatus = FString::Printf(TEXT("Full-loop collection needs four setups, three puzzles, spawn-all debugging off, and at least %d seeds per puzzle file. Increase Max Saved Seeds Per Puzzle; 50 suits the Card/Trap setup."), BucketsPerPuzzle);
+        SeedCollectionStatus = FString::Printf(TEXT("Full loop collection needs four setups, three puzzles, spawn all debugging off, and at least %d seeds per puzzle file. Increase Max Saved Seeds Per Puzzle; 50 suits the Card/Trap setup."), BucketsPerPuzzle);
         UE_LOG(LogTemp, Error, TEXT("Maze seeds: %s"), *SeedCollectionStatus);
         return false;
     }
     TArray<FName> PuzzleIds;
-    PuzzleRoomsById.GetKeys(PuzzleIds);
+    GetActivePuzzleRooms().GetKeys(PuzzleIds);
     PuzzleIds.Sort([](const FName& A, const FName& B) { return A.LexicalLess(B); });
     for (const FName& Id : PuzzleIds)
     {
@@ -509,7 +516,7 @@ bool AMazeGenerator::PrepareSeedSession(AMazeActors* Room, FName DoorTag)
     ResetSeedSession();
     SeedBankProfile = BuildSeedBankProfile(Room, DoorTag, CurrentRoomEntranceTag);
     const TArray<FName> FilePuzzleIds = GetSeedFilePuzzleIds();
-    if (FilePuzzleIds.Num() != 3) { return PuzzleRoomsById.IsEmpty() && !bRequireSavedSeeds; }
+    if (FilePuzzleIds.Num() != 3) { return GetActivePuzzleRooms().IsEmpty() && !bRequireSavedSeeds; }
     if (!SetSeedBankPuzzleFile(ActivePuzzleId.IsNone() ? FilePuzzleIds[0] : ActivePuzzleId)) { return false; }
     bool bCollect = false;
 #if WITH_EDITOR
@@ -563,7 +570,7 @@ bool AMazeGenerator::PrepareSeedSession(AMazeActors* Room, FName DoorTag)
         {
             if (Entry.Seed >= NextSeedToTest && Entry.Seed < MAX_int32) { NextSeedToTest = Entry.Seed + 1; }
         }
-        SeedCollectionStatus = TEXT("Collecting the first door and all three next-room doors; the live door stays closed.");
+        SeedCollectionStatus = TEXT("Collecting the first door and all three next room doors; the live door stays closed.");
         UE_LOG(LogTemp, Display, TEXT("Maze seeds: Collecting %d/%d across all four door setups. File: %s"), SavedSeedCount, TargetSavedSeedCount, *CurrentSeedBankFile);
         return true;
     }
@@ -589,7 +596,7 @@ bool AMazeGenerator::PrepareSeedSession(AMazeActors* Room, FName DoorTag)
     if (SavedSeedCandidates.IsEmpty() && bRequireSavedSeeds)
     {
         SeedCollectionStatus = TEXT("No approved seeds match this puzzle, door setup, and room history.");
-        UE_LOG(LogTemp, Error, TEXT("Maze seeds: %s Run full-loop collection from the first room's Door1 in PIE. Puzzle: %s. Room: %s. Door: %s. Incoming: %s. Profile: %s. History: %s x%d. File: %s"),
+        UE_LOG(LogTemp, Error, TEXT("Maze seeds: %s Run full loop collection from the first room's Door1 in PIE. Puzzle: %s. Room: %s. Door: %s. Incoming: %s. Profile: %s. History: %s x%d. File: %s"),
             *SeedCollectionStatus, *ActivePuzzleId.ToString(), *SeedClassPath(Room->GetClass()), *DoorTag.ToString(),
             *CurrentRoomEntranceTag.ToString(), *SeedBankProfile, *PreviousClass, PreviousCount, *CurrentSeedBankFile);
         return false;
@@ -629,7 +636,7 @@ bool AMazeGenerator::PrepareLayoutSeed()
             ChosenDoorTag = Setup.DoorTag;
             SeedBankProfile = Setup.Profile;
             ActivePuzzleId = Bucket.PuzzleId;
-            ActivePuzzleRoomClass = PuzzleRoomsById.FindRef(ActivePuzzleId);
+            ActivePuzzleRoomClass = GetActivePuzzleRooms().FindRef(ActivePuzzleId);
             if (!SetSeedBankPuzzleFile(ActivePuzzleId)) { return false; }
             LastRouteRoomClass = Bucket.PreviousRoomClass.Get();
             ConsecutiveRouteRooms = Bucket.PreviousRoomCount;
@@ -700,7 +707,7 @@ bool AMazeGenerator::HandleSeedAttemptCleanup(bool bRetry)
     {
         UE_LOG(LogTemp, Display, TEXT("Maze seeds: Tested %d candidates, saved %d/%d. Stop PIE to pause."), TestedSeedCount, SavedSeedCount, TargetSavedSeedCount);
     }
-    // Seed-bank entries must pass without local rewinds or failed whole-layout attempts.
+    // Seed bank entries must pass without local rewinds or failed whole layout attempts.
     QueueSeedCollectionCleanup(true);
     return true;
 }
@@ -760,8 +767,8 @@ void AMazeGenerator::FinishSeedCollection()
         && CoveredSeedBuckets == RequiredSeedBuckets;
     if (bReached)
     {
-        SeedCollectionStatus = bCollectSeedsInEditor ? TEXT("Full-loop collection complete: all four door setups and every history covered. Disable Collect Seeds In Editor to play.")
-            : TEXT("Full-loop collection complete: all four door setups and every history covered. Ready for normal play.");
+        SeedCollectionStatus = bCollectSeedsInEditor ? TEXT("Full loop collection complete: all four door setups and every history covered. Disable Collect Seeds In Editor to play.")
+            : TEXT("Full loop collection complete: all four door setups and every history covered. Ready for normal play.");
     }
     CancelGeneration();
     ChosenDoorTag = NAME_None;
