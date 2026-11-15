@@ -1,15 +1,18 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Enviornment/MazePuzzleComponent.h"
+#include "Enviornment/MazePipePiece.h"
+#include "Enviornment/MazePipeFitting.h"
+#include "Math/RotationMatrix.h"
 #include "Enviornment/MazeActors.h"
 #include "Enviornment/MazeGenerator.h"
 #include "Enviornment/MazeInterface.h"
 #include "Enviornment/MazePuzzleButton.h"
+#include "Enviornment/MazeSaveSubsystem.h"
+#include "Components/LineBatchComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
-#include "Components/CapsuleComponent.h"
 #include "Components/MeshComponent.h"
-#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
@@ -17,43 +20,14 @@
 #include "NavigationData.h"
 #include "NavigationSystem.h"
 
-namespace
-{
-    bool IsPlayerFullyInsideRoomArea(const UBoxComponent& Area, const APawn& Player)
-    {
-        const FTransform& Transform = Area.GetComponentTransform();
-        FVector Center;
-        FVector Extent;
-        if (const UCapsuleComponent* Capsule = Cast<UCapsuleComponent>(Player.GetRootComponent()))
-        {
-            Center = Capsule->GetComponentLocation();
-            float Radius;
-            float HalfHeight;
-            Capsule->GetScaledCapsuleSize(Radius, HalfHeight);
-            const FVector Up = Transform.InverseTransformVectorNoScale(Capsule->GetUpVector());
-            Extent = FVector(Radius) + Up.GetAbs() * FMath::Max(0.0f, HalfHeight - Radius);
-        }
-        else
-        {
-            FVector WorldExtent;
-            Player.GetActorBounds(true, Center, WorldExtent);
-            Extent = FVector(
-                FVector::DotProduct(WorldExtent, Area.GetForwardVector().GetAbs()),
-                FVector::DotProduct(WorldExtent, Area.GetRightVector().GetAbs()),
-                FVector::DotProduct(WorldExtent, Area.GetUpVector().GetAbs()));
-        }
-
-        const FVector Farthest = Transform.InverseTransformPositionNoScale(Center).GetAbs() + Extent;
-        const FVector BoxExtent = Area.GetScaledBoxExtent();
-        return Farthest.X <= BoxExtent.X && Farthest.Y <= BoxExtent.Y && Farthest.Z <= BoxExtent.Z;
-    }
-}
-
 UMazePuzzleComponent::UMazePuzzleComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.bStartWithTickEnabled = false;
     PrimaryComponentTick.TickInterval = 0.05f;
+#if WITH_EDITOR
+    bTickInEditor = true;
+#endif
 }
 
 bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName SelectedId, TSubclassOf<APawn> AngelClass, int32 Seed, bool bSpawnAllButtons, bool bSpawnAllEnemies)
@@ -65,7 +39,14 @@ bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName Select
         return false;
     }
 
-    RequestedEnemyCount = FMath::Clamp(WeepingAngelCount, 0, 16);
+    if (bUsePipePuzzle && bUsePressureButtons)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Disable Use Pressure Buttons on the pipe room component."));
+        return false;
+    }
+
+    bSpawnAllEnemies = bSpawnAllEnemies && !bUsePipePuzzle;
+    RequestedEnemyCount = bUsePipePuzzle ? 0 : FMath::Clamp(WeepingAngelCount, 0, 16);
 
     if ((bUsePressureButtons && (!ButtonClass || !AngelClass)) || ((RequestedEnemyCount > 0 || bSpawnAllEnemies) && !AngelClass))
     {
@@ -111,6 +92,11 @@ bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName Select
 
     // Validate the entry trigger now, while keeping all Angels unspawned.
     if ((RequestedEnemyCount > 0 || bSpawnAllEnemies) && !PrepareEnemyEntryTrigger())
+    {
+        return false;
+    }
+
+    if (bUsePipePuzzle && !GeneratePipeLayouts(Seed))
     {
         return false;
     }
@@ -403,12 +389,12 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
 {
     APawn* Player = Cast<APawn>(OtherActor);
 
-    if (!bArmed || bPuzzleCompleted || CompletedExitArea.IsValid() || !bWaitingForEnemyEntry || !IsValid(OverlappedComponent) || OverlappedComponent != EnemyEntryTrigger.Get() || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    if (!bArmed || !bWaitingForEnemyEntry || !IsValid(OverlappedComponent) || OverlappedComponent != EnemyEntryTrigger.Get() || OverlappedComponent->GetOwner() != GetOwner() || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
         return;
     }
 
-    // Record the entry before spawning so extra overlaps cannot start it twice.
+    // Latch before spawning; additional player components and re-entry cannot duplicate it.
     bWaitingForEnemyEntry = false;
     bEnemySpawningPending = true;
     EnemySpawnRetryRemaining = 0.0f;
@@ -417,7 +403,7 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
     Trigger->OnComponentBeginOverlap.RemoveDynamic(this, &UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap);
     Trigger->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-    // Start the pressure plate puzzle when the player enters.
+    // Keep the pressure-room door and console behavior when entry starts the Angels.
     if (bUsePressureButtons && !bPuzzleStarted)
     {
         BeginPuzzle(Player);
@@ -426,7 +412,7 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
     UE_LOG(LogTemp, Display, TEXT("Puzzle: Player entered %s. Starting the room's Weeping Angel spawns."), *GetNameSafe(GetOwner()));
 
     AdvanceEntryEnemySpawning(0.0f);
-    SetComponentTickEnabled(bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+    SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
 }
 
 void UMazePuzzleComponent::AdvanceEntryEnemySpawning(float DeltaTime)
@@ -477,11 +463,8 @@ void UMazePuzzleComponent::ArmPuzzle()
     // A validated entry trigger counts as ready while its Angels wait for the player.
     const bool bEnemiesReady = bWaitingForEnemyEntry || bEnemySpawningPending || (bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount);
     bArmed = bPrepared && (!bUsePressureButtons || SpawnedButtons.Num() == 2) && bEnemiesReady;
-    SetComponentTickEnabled(bArmed && (CompletedExitArea.IsValid() || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked)));
-    if (!CompletedExitArea.IsValid())
-    {
-        EnableEnemyEntryTrigger();
-    }
+    SetComponentTickEnabled(bPipeSteamChecking || (bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked))));
+    EnableEnemyEntryTrigger();
 }
 
 bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
@@ -491,28 +474,28 @@ bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
         return false;
     }
 
-    const UBoxComponent* Area = CompletedExitArea.Get();
-    if (Area && (!Area->K2_IsQueryCollisionEnabled() || !IsPlayerFullyInsideRoomArea(*Area, *Player)))
-    {
-        return false;
-    }
-
-    const bool bTurnConsoleRed = !bButtonsUnlocked && !bConsoleRed;
+    // Lock once on entry. Extra overlaps and later re-entry do not reset it.
     bPuzzleStarted = true;
     bPuzzleDoorUnlocked = false;
-    bConsoleRed = !bButtonsUnlocked;
+    bConsoleRed = true;
     IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
     UpdateStatusLights();
-    if (bTurnConsoleRed)
-    {
-        OnConsoleStateChanged.Broadcast(true);
-    }
+    OnConsoleStateChanged.Broadcast(true);
     SetComponentTickEnabled(true);
     return true;
 }
 
 bool UMazePuzzleComponent::ActivateConsole(APawn* Player)
 {
+    if (bUsePipePuzzle)
+    {
+        if (!bArmed || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled()
+            || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+        {
+            return false;
+        }
+        return CheckPipePuzzle();
+    }
     if (!bArmed || !bPuzzleStarted || !bButtonsUnlocked || bPuzzleDoorUnlocked || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
         return false;
@@ -557,11 +540,10 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-    const UBoxComponent* Area = CompletedExitArea.Get();
-    const bool bWatchRoom = bArmed && !bPuzzleCompleted && Area && MazeGenerator.IsValid()
-        && MazeGenerator->LoopState == EMazeLoopState::TraversingMaze;
-    if (bWatchRoom && !UpdateRoomVisit(*Area))
+    AdvancePipeSteamCheck(DeltaTime);
+    if (GetWorld() && !GetWorld()->IsGameWorld())
     {
+        SetComponentTickEnabled(bPipeSteamChecking);
         return;
     }
 
@@ -569,7 +551,7 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 
     if (!bArmed || !bPuzzleStarted || bButtonsUnlocked || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || SpawnedButtons.Num() != 2 || !IsValid(SpawnedButtons[0]) || !IsValid(SpawnedButtons[1]))
     {
-        if (!bWatchRoom && !bEnemySpawningPending)
+        if (!bEnemySpawningPending && !bPipeSteamChecking)
         {
             SetComponentTickEnabled(false);
         }
@@ -590,75 +572,10 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         // Turn the console blue, but keep the door locked until it is used.
         bButtonsUnlocked = true;
         bConsoleRed = false;
-        SetComponentTickEnabled(bWatchRoom || bEnemySpawningPending);
+        SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending);
         OnConsoleStateChanged.Broadcast(false);
         OnButtonsUnlocked.Broadcast();
     }
-}
-
-bool UMazePuzzleComponent::UpdateRoomVisit(const UBoxComponent& Area)
-{
-    if (!Area.K2_IsQueryCollisionEnabled() || !Area.GetGenerateOverlapEvents()
-        || Area.GetCollisionResponseToChannel(ECC_Pawn) != ECR_Overlap)
-    {
-        return false;
-    }
-
-    APawn* Player = UGameplayStatics::GetPlayerPawn(this, 0);
-    const bool bPlayerValid = IsValid(Player) && Player->IsPlayerControlled();
-    const UCapsuleComponent* Capsule = bPlayerValid ? Cast<UCapsuleComponent>(Player->GetRootComponent()) : nullptr;
-    const bool bPlayerOverlapping = bPlayerValid && (Capsule ? Area.IsOverlappingComponent(Capsule) : Area.IsOverlappingActor(Player));
-    if (bPlayerOverlapping)
-    {
-        if (!IsPlayerFullyInsideRoomArea(Area, *Player))
-        {
-            return false;
-        }
-
-        if (!bRoomVisitActive)
-        {
-            bRoomVisitActive = true;
-            if (bUsePressureButtons && !bPuzzleStarted)
-            {
-                BeginPuzzle(Player);
-            }
-            if (bWaitingForEnemyEntry)
-            {
-                bWaitingForEnemyEntry = false;
-                bEnemySpawningPending = true;
-            }
-        }
-        return true;
-    }
-
-    if (!bRoomVisitActive && bPuzzleDoorUnlocked)
-    {
-        return false;
-    }
-
-    bRoomVisitActive = false;
-    bEnemySpawningPending = false;
-    bWaitingForEnemyEntry = RequestedEnemyCount > 0 || bDebugSpawnAllEnemies;
-    EnemySpawnIndex = 0;
-    EnemySpawnRetryRemaining = 0.0f;
-    ClearSpawnedWeepingAngels();
-
-    // Start the puzzle again on entry if the console still needs to be used.
-    bPuzzleStarted = bPuzzleStarted && bPuzzleDoorUnlocked;
-    bPuzzleDoorUnlocked = true;
-    IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
-    UpdateStatusLights();
-    if (!bButtonsUnlocked)
-    {
-        for (AMazePuzzleButton* Button : SpawnedButtons)
-        {
-            if (IsValid(Button))
-            {
-                Button->SetPressed(false);
-            }
-        }
-    }
-    return false;
 }
 
 bool UMazePuzzleComponent::CompletePuzzle()
@@ -670,7 +587,7 @@ bool UMazePuzzleComponent::CompletePuzzle()
 
     bPuzzleCompleted = true;
     UpdateStatusLights();
-    SetComponentTickEnabled(bEnemySpawningPending);
+    SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending);
     QueueCompletedExitCheck();
     OnPuzzleCompleted.Broadcast();
     return true;
@@ -905,13 +822,6 @@ void UMazePuzzleComponent::ClearSpawnedActors()
         }
     }
 
-    ClearSpawnedWeepingAngels();
-    SpawnedButtons.Reset();
-    DebugButtons.Reset();
-}
-
-void UMazePuzzleComponent::ClearSpawnedWeepingAngels()
-{
     for (APawn* Enemy : SpawnedWeepingAngels)
     {
         if (IsValid(Enemy))
@@ -927,11 +837,15 @@ void UMazePuzzleComponent::ClearSpawnedWeepingAngels()
         }
     }
 
+    SpawnedButtons.Reset();
+    DebugButtons.Reset();
     SpawnedWeepingAngels.Reset();
 }
 
 void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    ClearPipePreviewObjects();
+    ClearRuntimePipeMeshes();
     bArmed = false;
     SetComponentTickEnabled(false);
     ClearEnemyEntryTrigger();
@@ -940,4 +854,883 @@ void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     StatusLightMeshes.Reset();
     ClearSpawnedActors();
     Super::EndPlay(EndPlayReason);
+}
+
+bool UMazePuzzleComponent::BuildPipeFrame(bool bRightWall, FMazePipeGridFrame& OutFrame, FString& OutError) const
+{
+    const AActor* Owner = GetOwner();
+    if (!IsValid(Owner))
+    {
+        OutError = TEXT("The pipe puzzle component needs a room owner.");
+        return false;
+    }
+
+    const TArray<FName> Tags = { LeftBottomLeftTag, LeftBottomRightTag, LeftTopLeftTag, LeftTopRightTag,
+        RightBottomLeftTag, RightBottomRightTag, RightTopLeftTag, RightTopRightTag };
+    TArray<UArrowComponent*> Arrows;
+    Owner->GetComponents<UArrowComponent>(Arrows);
+    TArray<UArrowComponent*> UsedArrows;
+    TArray<FName> UsedTags;
+    TArray<FVector> Corners;
+    for (FName Tag : Tags)
+    {
+        if (Tag.IsNone() || UsedTags.Contains(Tag))
+        {
+            OutError = TEXT("Each pipe corner needs a different nonempty component tag.");
+            return false;
+        }
+        UsedTags.Add(Tag);
+
+        UArrowComponent* Found = nullptr;
+        for (UArrowComponent* Arrow : Arrows)
+        {
+            if (IsValid(Arrow) && Arrow->ComponentHasTag(Tag))
+            {
+                if (Found)
+                {
+                    OutError = FString::Printf(TEXT("More than one arrow has the pipe corner tag %s."), *Tag.ToString());
+                    return false;
+                }
+                Found = Arrow;
+            }
+        }
+        if (!Found || UsedArrows.Contains(Found))
+        {
+            OutError = FString::Printf(TEXT("Provide one separate arrow with component tag %s. Naming the component alone does not add its tag."), *Tag.ToString());
+            return false;
+        }
+        UsedArrows.Add(Found);
+        Corners.Add(Found->GetComponentLocation());
+    }
+
+    const FVector LeftCenter = (Corners[0] + Corners[1] + Corners[2] + Corners[3]) * 0.25;
+    const FVector RightCenter = (Corners[4] + Corners[5] + Corners[6] + Corners[7]) * 0.25;
+    const int32 Start = bRightWall ? 4 : 0;
+    const TArray<FVector> WallCorners = { Corners[Start], Corners[Start + 1], Corners[Start + 2], Corners[Start + 3] };
+    return FMazePipePuzzle::BuildGrid(WallCorners, bRightWall ? LeftCenter - RightCenter : RightCenter - LeftCenter,
+        PipeGridSettings.Columns, PipeGridSettings.Rows, PipeBorderPadding, PipeWallOffset, OutFrame, OutError, PipeGridSettings.bFitColumnsToWall);
+}
+
+bool UMazePuzzleComponent::BuildPipeLayouts(int32 Seed, bool bHard)
+{
+    if (!bUsePipePuzzle)
+    {
+        return false;
+    }
+
+    bLeftPipeActive = false;
+    bRightPipeActive = false;
+    LeftPipeLayout = FMazePipeLayout();
+    RightPipeLayout = FMazePipeLayout();
+    FMazePipeGridFrame LeftFrame;
+    FMazePipeGridFrame RightFrame;
+    FString Error;
+    if (!BuildPipeFrame(false, LeftFrame, Error) || !BuildPipeFrame(true, RightFrame, Error))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: %s"), *Error);
+        return false;
+    }
+
+    FRandomStream Selection(Seed);
+    const bool bChooseRight = Selection.RandRange(0, 1) != 0;
+    const int32 LeftSeed = static_cast<int32>(Selection.GetUnsignedInt());
+    const int32 RightSeed = static_cast<int32>(Selection.GetUnsignedInt());
+    const bool bUseLeft = bHard || !bChooseRight;
+    const bool bUseRight = bHard || bChooseRight;
+    FMazePipeLayout NewLeft;
+    FMazePipeLayout NewRight;
+    FMazePipeGridSettings LeftSettings = PipeGridSettings;
+    FMazePipeGridSettings RightSettings = PipeGridSettings;
+    LeftSettings.Columns = LeftFrame.Columns;
+    LeftSettings.Rows = LeftFrame.Rows;
+    RightSettings.Columns = RightFrame.Columns;
+    RightSettings.Rows = RightFrame.Rows;
+    if ((bUseLeft && !FMazePipePuzzle::Generate(LeftSettings, LeftSeed, NewLeft, Error))
+        || (bUseRight && !FMazePipePuzzle::Generate(RightSettings, RightSeed, NewRight, Error)))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: %s"), *Error);
+        return false;
+    }
+
+    LeftPipeLayout = MoveTemp(NewLeft);
+    RightPipeLayout = MoveTemp(NewRight);
+    bLeftPipeActive = bUseLeft;
+    bRightPipeActive = bUseRight;
+    return true;
+}
+
+bool UMazePuzzleComponent::GeneratePipeLayouts(int32 Seed)
+{
+    ResetPipeCompletion();
+    ResetPipeLights();
+    const UMazeSaveSubsystem* SaveSystem = UMazeSaveSubsystem::Get(this);
+    const bool bHard = !IsValid(SaveSystem) || SaveSystem->GetDifficulty() == EMazeDifficulty::Hard;
+    const bool bGenerated = BuildPipeLayouts(Seed, bHard);
+    if (GetWorld() && GetWorld()->IsGameWorld())
+    {
+        if (!bGenerated)
+        {
+            ClearRuntimePipeMeshes();
+            return false;
+        }
+        return BuildPipeMeshes();
+    }
+    return bGenerated;
+}
+
+bool UMazePuzzleComponent::RotatePipeCell(bool bRightWall, int32 CellIndex, bool bRotateRight)
+{
+    if (!bUsePipePuzzle || bPipeSteamChecking || bPuzzleCompleted || (bRightWall ? bRightPipeCompleted : bLeftPipeCompleted)
+        || !(bRightWall ? bRightPipeActive : bLeftPipeActive))
+    {
+        return false;
+    }
+    FMazePipeLayout& Layout = bRightWall ? RightPipeLayout : LeftPipeLayout;
+    FMazePipeGridFrame Frame;
+    FString Error;
+    if (!BuildPipeFrame(bRightWall, Frame, Error) || Layout.Columns != Frame.Columns || Layout.Rows != Frame.Rows)
+    {
+        return false;
+    }
+    if (!FMazePipePuzzle::RotateCell(Layout, CellIndex, bRotateRight))
+    {
+        return false;
+    }
+    ResetPipeLights();
+    for (AMazePipePiece* Actor : PipeMeshActors)
+    {
+        if (IsValid(Actor) && Actor->bRightWall == bRightWall && Actor->GridCellIndex == CellIndex)
+        {
+            FVector X;
+            FVector Y;
+            FMazePipeFitting::GetCellAxes(Frame, Layout.Cells[CellIndex].Rotation, false, X, Y);
+            Actor->SetActorRotation(FRotationMatrix::MakeFromXY(X, Y).ToQuat());
+            Actor->ConfigureIndicators(Layout.Cells[CellIndex], Frame);
+        }
+    }
+    return true;
+}
+
+FMazePipeSteamResult UMazePuzzleComponent::TracePipeWall(bool bRightWall) const
+{
+    if (!bUsePipePuzzle || !(bRightWall ? bRightPipeActive : bLeftPipeActive))
+    {
+        return FMazePipeSteamResult();
+    }
+    return FMazePipePuzzle::TraceSteam(bRightWall ? RightPipeLayout : LeftPipeLayout);
+}
+
+bool UMazePuzzleComponent::GetPipeCellLocation(bool bRightWall, int32 CellIndex, FVector& Location, float& CellSize) const
+{
+    Location = FVector::ZeroVector;
+    CellSize = 0.0f;
+    const FMazePipeLayout& Layout = bRightWall ? RightPipeLayout : LeftPipeLayout;
+    if (!bUsePipePuzzle || !(bRightWall ? bRightPipeActive : bLeftPipeActive) || !Layout.Cells.IsValidIndex(CellIndex))
+    {
+        return false;
+    }
+    FMazePipeGridFrame Frame;
+    FString Error;
+    if (!BuildPipeFrame(bRightWall, Frame, Error) || Layout.Columns != Frame.Columns || Layout.Rows != Frame.Rows)
+    {
+        return false;
+    }
+    Location = Frame.GetCellCenter(CellIndex);
+    CellSize = Frame.CellSize;
+    return true;
+}
+
+void UMazePuzzleComponent::PreviewPipeGrid()
+{
+    if (!IsValid(GetWorld()) || GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    ClearPreview();
+    DrawPipePreview(false, false);
+}
+
+void UMazePuzzleComponent::PreviewPipeLayout()
+{
+    if (!IsValid(GetWorld()) || GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    ClearPreview();
+    // Preview both walls for authoring. Runtime still reads the existing save difficulty.
+    if (BuildPipeLayouts(PipePreviewSeed, true))
+    {
+        DrawPipePreview(true, false);
+    }
+}
+
+void UMazePuzzleComponent::PreviewPipeSolution()
+{
+    if (!IsValid(GetWorld()) || GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    ClearPreview();
+    if (BuildPipeLayouts(PipePreviewSeed, true))
+    {
+        DrawPipePreview(true, true);
+    }
+}
+
+void UMazePuzzleComponent::DrawPipePreview(bool bShowLayout, bool bShowSolution)
+{
+    UWorld* World = GetWorld();
+    if (!bUsePipePuzzle || !IsValid(World) || World->IsGameWorld())
+    {
+        return;
+    }
+    ULineBatchComponent* Lines = GetPipePreviewLines();
+    if (!IsValid(Lines))
+    {
+        return;
+    }
+    const float Duration = FMath::Clamp(PipePreviewDuration, 1.0f, 60.0f);
+    for (int32 Wall = 0; Wall < 2; ++Wall)
+    {
+        FMazePipeGridFrame Frame;
+        FString Error;
+        if (!BuildPipeFrame(Wall != 0, Frame, Error))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: %s"), *Error);
+            return;
+        }
+        UE_LOG(LogTemp, Display, TEXT("Pipe puzzle: %s wall has %d columns, %d rows and %.1f cm square cells."),
+            Wall != 0 ? TEXT("Right") : TEXT("Left"), Frame.Columns, Frame.Rows, Frame.CellSize);
+        for (int32 Column = 0; Column <= Frame.Columns; ++Column)
+        {
+            const FVector Start = Frame.BottomLeft + Frame.Right * (Column * Frame.CellSize);
+            Lines->DrawLine(Start, Start + Frame.Up * (Frame.Rows * Frame.CellSize), FLinearColor(FColor(70, 100, 130)), 0, 1.0f, Duration, 0);
+        }
+        for (int32 Row = 0; Row <= Frame.Rows; ++Row)
+        {
+            const FVector Start = Frame.BottomLeft + Frame.Up * (Row * Frame.CellSize);
+            Lines->DrawLine(Start, Start + Frame.Right * (Frame.Columns * Frame.CellSize), FLinearColor(FColor(70, 100, 130)), 0, 1.0f, Duration, 0);
+        }
+
+        const FMazePipeLayout& Layout = Wall != 0 ? RightPipeLayout : LeftPipeLayout;
+        if (!bShowLayout || Layout.Columns != Frame.Columns || Layout.Rows != Frame.Rows)
+        {
+            continue;
+        }
+        for (int32 Index = 0; Index < Layout.Cells.Num(); ++Index)
+        {
+            FMazePipeCell Cell = Layout.Cells[Index];
+            if (bShowSolution)
+            {
+                Cell.Rotation = Cell.SolutionRotation;
+            }
+            const FVector Center = Frame.GetCellCenter(Index) + Frame.Inward * 1.0f;
+            const FColor Color = Cell.Piece == EMazePipePiece::Inlet ? FColor::Blue
+                : Cell.Piece == EMazePipePiece::Outlet ? FColor(170, 60, 255)
+                : Cell.Piece == EMazePipePiece::Chamber ? FColor::Yellow
+                : bShowSolution && Cell.bOnSolution ? FColor::Cyan : FColor::White;
+            const uint8 Ports = FMazePipePuzzle::GetPorts(Cell);
+            const FVector Directions[] = { Frame.Up, Frame.Right, -Frame.Up, -Frame.Right };
+            Lines->DrawPoint(Center, FLinearColor(Color), Cell.bLocked ? 14.0f : 7.0f, 0, Duration, 0);
+            for (int32 Direction = 0; Direction < 4; ++Direction)
+            {
+                if (Ports & (1 << Direction))
+                {
+                    Lines->DrawLine(Center, Center + Directions[Direction] * (Frame.CellSize * 0.5f), FLinearColor(Color), 0, 3.0f, Duration, 0);
+                }
+            }
+            if (Cell.bLocked)
+            {
+                Lines->DrawLine(Center, Center - Frame.Inward * (Frame.CellSize * 0.25f), FLinearColor(Color), 0, 3.0f, Duration, 0);
+            }
+        }
+    }
+}
+
+TSubclassOf<AMazePipePiece> UMazePuzzleComponent::GetPipeMeshClass(EMazePipePiece Piece) const
+{
+    switch (Piece)
+    {
+    case EMazePipePiece::Straight:
+        return StraightPipeClass;
+    case EMazePipePiece::Bend:
+    case EMazePipePiece::Inlet:
+    case EMazePipePiece::Outlet:
+        return BendPipeClass;
+    case EMazePipePiece::Tee:
+        return TeePipeClass;
+    case EMazePipePiece::Chamber:
+        return ChamberPipeClass;
+    case EMazePipePiece::Cross:
+        return CrossPipeClass;
+    default:
+        return nullptr;
+    }
+}
+
+USceneComponent* UMazePuzzleComponent::GetPipeWallParent(bool bRightWall) const
+{
+    TArray<UArrowComponent*> Arrows;
+    GetOwner()->GetComponents<UArrowComponent>(Arrows);
+    const FName Tag = bRightWall ? RightBottomLeftTag : LeftBottomLeftTag;
+    for (UArrowComponent* Arrow : Arrows)
+    {
+        if (IsValid(Arrow) && Arrow->ComponentHasTag(Tag))
+        {
+            return IsValid(Arrow->GetAttachParent()) ? Arrow->GetAttachParent() : GetOwner()->GetRootComponent();
+        }
+    }
+    return GetOwner()->GetRootComponent();
+}
+
+bool UMazePuzzleComponent::SpawnPipePreviewPiece(bool bRightWall, const FMazePipeGridFrame& Frame, int32 CellIndex, const FMazePipeCell& Cell)
+{
+    return SpawnPipePiece(bRightWall, Frame, CellIndex, Cell, true);
+}
+
+bool UMazePuzzleComponent::SpawnPipePiece(bool bRightWall, const FMazePipeGridFrame& Frame, int32 CellIndex, const FMazePipeCell& Cell, bool bPreview)
+{
+    const TSubclassOf<AMazePipePiece> Class = GetPipeMeshClass(Cell.Piece);
+    if (!Class || !StraightPipeClass || !IsValid(GetWorld()) || !IsValid(GetOwner()))
+    {
+        return false;
+    }
+    const AMazePipePiece* StraightSource = StraightPipeClass->GetDefaultObject<AMazePipePiece>();
+    const bool bWallConnection = Cell.Piece == EMazePipePiece::Inlet || Cell.Piece == EMazePipePiece::Outlet;
+    FVector X;
+    FVector Y;
+    FMazePipeFitting::GetCellAxes(Frame, Cell.Rotation, bWallConnection, X, Y);
+    const FTransform Transform(FRotationMatrix::MakeFromXY(X, Y).ToQuat(), Frame.GetCellCenter(CellIndex));
+    FActorSpawnParameters Spawn;
+    Spawn.Owner = GetOwner();
+    Spawn.ObjectFlags |= RF_Transient;
+    if (bPreview)
+    {
+        Spawn.ObjectFlags |= RF_DuplicateTransient;
+    }
+    Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    AMazePipePiece* Actor = GetWorld()->SpawnActor<AMazePipePiece>(Class, Transform, Spawn);
+    if (!IsValid(Actor))
+    {
+        return false;
+    }
+    FString Error;
+    if (!Actor->FitToCell(Cell, Frame.CellSize, Frame.CellSize * PipeDiameterFraction,
+        PipeWallOffset + PipeWallEmbedDepth, StraightSource, Error))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe mesh: %s: %s"), *Class->GetName(), *Error);
+        Actor->Destroy();
+        return false;
+    }
+    if (bPreview)
+    {
+        Actor->Tags.Add(FName(TEXT("MazePipeMeshPreview")));
+    }
+    Actor->GridCellIndex = CellIndex;
+    Actor->bRightWall = bRightWall;
+    Actor->ConfigureIndicators(Cell, Frame);
+    USceneComponent* Parent = GetPipeWallParent(bRightWall);
+    if (IsValid(Parent))
+    {
+        Actor->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
+    }
+    if (bPreview)
+    {
+        PipeMeshPreviewActors.Add(Actor);
+    }
+    else
+    {
+        PipeMeshActors.Add(Actor);
+    }
+    return true;
+}
+
+void UMazePuzzleComponent::ClearPipeMeshPreview()
+{
+    ClearPreview();
+}
+
+void UMazePuzzleComponent::ClearPreview()
+{
+    if (GetWorld() && GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    ClearPipePreviewObjects();
+}
+
+void UMazePuzzleComponent::ClearPipePreviewObjects()
+{
+    ResetPipeCompletion();
+    ResetPipeLights();
+    bHasPipeLayoutPreview = false;
+    bPipePreviewShowsSolution = false;
+    for (AMazePipePiece* Actor : PipeMeshPreviewActors)
+    {
+        if (IsValid(Actor))
+        {
+            Actor->Destroy();
+        }
+    }
+    PipeMeshPreviewActors.Reset();
+    if (IsValid(PipePreviewLines))
+    {
+        PipePreviewLines->Flush();
+        PipePreviewLines->DestroyComponent();
+        PipePreviewLines = nullptr;
+    }
+    if (!GetWorld() || !GetWorld()->IsGameWorld())
+    {
+        bLeftPipeActive = false;
+        bRightPipeActive = false;
+        LeftPipeLayout = FMazePipeLayout();
+        RightPipeLayout = FMazePipeLayout();
+        bPipeCheckUsesPreview = false;
+    }
+}
+
+ULineBatchComponent* UMazePuzzleComponent::GetPipePreviewLines()
+{
+    if (!IsValid(GetWorld()) || GetWorld()->IsGameWorld() || !IsValid(GetOwner()))
+    {
+        return nullptr;
+    }
+    if (!IsValid(PipePreviewLines))
+    {
+        PipePreviewLines = NewObject<ULineBatchComponent>(GetOwner(), NAME_None, RF_Transient | RF_DuplicateTransient);
+        PipePreviewLines->SetMobility(EComponentMobility::Movable);
+        PipePreviewLines->SetWorldTransform(FTransform::Identity);
+        PipePreviewLines->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        PipePreviewLines->SetCanEverAffectNavigation(false);
+        PipePreviewLines->bIsEditorOnly = true;
+        PipePreviewLines->bCalculateAccurateBounds = true;
+#if WITH_EDITOR
+        PipePreviewLines->bTickInEditor = true;
+#endif
+        GetOwner()->AddInstanceComponent(PipePreviewLines.Get());
+        PipePreviewLines->RegisterComponentWithWorld(GetWorld());
+        PipePreviewLines->SetComponentTickEnabled(true);
+    }
+    return PipePreviewLines.Get();
+}
+
+void UMazePuzzleComponent::ResetPipeCompletion()
+{
+    bLeftPipeCompleted = false;
+    bRightPipeCompleted = false;
+    LeftPipeSteamResult = FMazePipeSteamResult();
+    RightPipeSteamResult = FMazePipeSteamResult();
+    CheckedLeftPipeLayout = FMazePipeLayout();
+    CheckedRightPipeLayout = FMazePipeLayout();
+}
+
+void UMazePuzzleComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
+{
+    ClearPipePreviewObjects();
+    ClearRuntimePipeMeshes();
+    Super::OnComponentDestroyed(bDestroyingHierarchy);
+}
+
+void UMazePuzzleComponent::PreviewPipeMeshFit()
+{
+    PreviewFailedPipeMesh();
+}
+
+void UMazePuzzleComponent::PreviewFailedPipeMesh()
+{
+    if (!bUsePipePuzzle || !IsValid(GetWorld()) || GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    BuildPipeMeshPreview(false, true);
+    if (bHasPipeLayoutPreview)
+    {
+        CheckPipePuzzle();
+    }
+}
+
+void UMazePuzzleComponent::BuildPipeMeshPreview(bool bShowSolution, bool bForceFailure)
+{
+    if (!bUsePipePuzzle || !IsValid(GetWorld()) || GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    if (!StraightPipeClass || !BendPipeClass)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe mesh preview: Assign the Straight Pipe Class and Bend Pipe Class first."));
+        return;
+    }
+    ClearPreview();
+    if (!BuildPipeLayouts(PipePreviewSeed, true))
+    {
+        return;
+    }
+    if (bForceFailure)
+    {
+        for (int32 Wall = 0; Wall < 2; ++Wall)
+        {
+            FMazePipeLayout& Layout = Wall != 0 ? RightPipeLayout : LeftPipeLayout;
+            FMazePipeLayout Failed;
+            FString Error;
+            int32 ChangedCell = INDEX_NONE;
+            if (!FMazePipePuzzle::MakeFailedPreview(Layout, Failed, ChangedCell, Error))
+            {
+                UE_LOG(LogTemp, Error, TEXT("Failed pipe preview: %s"), *Error);
+                return;
+            }
+            Layout = MoveTemp(Failed);
+            UE_LOG(LogTemp, Display, TEXT("Failed pipe preview: %s wall has one incorrect piece at cell %d."),
+                Wall != 0 ? TEXT("Right") : TEXT("Left"), ChangedCell);
+        }
+    }
+    WarnPipeLightMaterials();
+    DrawPipePreview(false, false);
+    int32 MissingClasses = 0;
+    ULineBatchComponent* Lines = GetPipePreviewLines();
+    if (!IsValid(Lines))
+    {
+        return;
+    }
+    const float Duration = FMath::Clamp(PipePreviewDuration, 1.0f, 60.0f);
+    for (int32 Wall = 0; Wall < 2; ++Wall)
+    {
+        FMazePipeGridFrame Frame;
+        FString Error;
+        if (!BuildPipeFrame(Wall != 0, Frame, Error))
+        {
+            ClearPreview();
+            return;
+        }
+        const FMazePipeLayout& Layout = Wall != 0 ? RightPipeLayout : LeftPipeLayout;
+        for (int32 Index = 0; Index < Layout.Cells.Num(); ++Index)
+        {
+            FMazePipeCell Cell = Layout.Cells[Index];
+            if (bShowSolution && !bForceFailure)
+            {
+                Cell.Rotation = Cell.SolutionRotation;
+            }
+            if (GetPipeMeshClass(Cell.Piece))
+            {
+                if (!SpawnPipePreviewPiece(Wall != 0, Frame, Index, Cell))
+                {
+                    ClearPreview();
+                    return;
+                }
+            }
+            else
+            {
+                ++MissingClasses;
+                const FVector Center = Frame.GetCellCenter(Index);
+                const FVector Directions[] = { Frame.Up, Frame.Right, -Frame.Up, -Frame.Right };
+                const uint8 Ports = FMazePipePuzzle::GetPorts(Cell);
+                const FColor Color = Cell.Piece == EMazePipePiece::Chamber ? FColor::Yellow : FColor::White;
+                for (int32 Direction = 0; Direction < 4; ++Direction)
+                {
+                    if (Ports & (1 << Direction))
+                    {
+                        Lines->DrawLine(Center, Center + Directions[Direction] * (Frame.CellSize * 0.5f), FLinearColor(Color), 0, 3.0f, Duration, 0);
+                    }
+                }
+            }
+        }
+    }
+    if (MissingClasses > 0)
+    {
+        UE_LOG(LogTemp, Display, TEXT("Pipe mesh preview: %d pieces still use lines. Assign the remaining Tee, Chamber and Cross classes when their source meshes are fitted."), MissingClasses);
+    }
+    bHasPipeLayoutPreview = true;
+    bPipePreviewShowsSolution = bShowSolution && !bForceFailure;
+}
+
+void UMazePuzzleComponent::PreviewPipeMeshes()
+{
+    BuildPipeMeshPreview(false);
+}
+
+void UMazePuzzleComponent::PreviewSolvedPipeMeshes()
+{
+    BuildPipeMeshPreview(true);
+}
+
+void UMazePuzzleComponent::WarnPipeLightMaterials() const
+{
+    const TArray<TSubclassOf<AMazePipePiece>> Classes = { StraightPipeClass, BendPipeClass, TeePipeClass, ChamberPipeClass, CrossPipeClass };
+    for (const TSubclassOf<AMazePipePiece>& Class : Classes)
+    {
+        if (Class)
+        {
+            const AMazePipePiece* Source = Class->GetDefaultObject<AMazePipePiece>();
+            if (Source->bGlowWholePipe && !IsValid(Source->IndicatorMaterial))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Pipe glow: Assign Indicator Material in the Class Defaults of %s."), *Class->GetName());
+            }
+        }
+    }
+}
+
+void UMazePuzzleComponent::ClearRuntimePipeMeshes()
+{
+    ResetPipeCompletion();
+    ResetPipeLights();
+    for (AMazePipePiece* Actor : PipeMeshActors)
+    {
+        if (IsValid(Actor))
+        {
+            Actor->Destroy();
+        }
+    }
+    PipeMeshActors.Reset();
+}
+
+bool UMazePuzzleComponent::BuildPipeMeshes()
+{
+    if (!bUsePipePuzzle || bPipeSteamChecking || !IsValid(GetWorld()) || !GetWorld()->IsGameWorld())
+    {
+        return false;
+    }
+    ClearRuntimePipeMeshes();
+    if (!StraightPipeClass || !BendPipeClass || !TeePipeClass || !ChamberPipeClass || !CrossPipeClass)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Assign all five pipe mesh classes before generating runtime pipes."));
+        return false;
+    }
+    if (!bLeftPipeActive && !bRightPipeActive)
+    {
+        return false;
+    }
+    WarnPipeLightMaterials();
+    for (int32 Wall = 0; Wall < 2; ++Wall)
+    {
+        const bool bRightWall = Wall != 0;
+        if (!(bRightWall ? bRightPipeActive : bLeftPipeActive))
+        {
+            continue;
+        }
+        FMazePipeGridFrame Frame;
+        FString Error;
+        const FMazePipeLayout& Layout = bRightWall ? RightPipeLayout : LeftPipeLayout;
+        if (!BuildPipeFrame(bRightWall, Frame, Error) || Layout.Columns != Frame.Columns || Layout.Rows != Frame.Rows
+            || Layout.Cells.Num() != Frame.Columns * Frame.Rows)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Regenerate the layout after changing the grid. %s"), *Error);
+            ClearRuntimePipeMeshes();
+            return false;
+        }
+        for (int32 Index = 0; Index < Layout.Cells.Num(); ++Index)
+        {
+            if (!SpawnPipePiece(bRightWall, Frame, Index, Layout.Cells[Index], false))
+            {
+                ClearRuntimePipeMeshes();
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void UMazePuzzleComponent::PreviewPipeSteamCheck()
+{
+    if (IsValid(GetWorld()) && !GetWorld()->IsGameWorld())
+    {
+        CheckPipePuzzle();
+    }
+}
+
+bool UMazePuzzleComponent::CheckPipePuzzle()
+{
+    if (!bUsePipePuzzle || bPipeSteamChecking || bPuzzleCompleted || !IsValid(GetWorld()))
+    {
+        return false;
+    }
+    if (!StraightPipeClass || !BendPipeClass || !TeePipeClass || !ChamberPipeClass || !CrossPipeClass)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Assign all five pipe classes before checking the pipe lights."));
+        return false;
+    }
+    const bool bPreview = !GetWorld()->IsGameWorld();
+    if (bPreview && !bHasPipeLayoutPreview)
+    {
+        BuildPipeMeshPreview(false);
+        if (!bHasPipeLayoutPreview)
+        {
+            return false;
+        }
+    }
+    if ((!bLeftPipeActive && !bRightPipeActive)
+        || ((!bLeftPipeActive || bLeftPipeCompleted) && (!bRightPipeActive || bRightPipeCompleted)))
+    {
+        return false;
+    }
+    const int32 ExpectedActors = (bLeftPipeActive ? LeftPipeLayout.Cells.Num() : 0)
+        + (bRightPipeActive ? RightPipeLayout.Cells.Num() : 0);
+    const TArray<TObjectPtr<AMazePipePiece>>& Actors = bPreview ? PipeMeshPreviewActors : PipeMeshActors;
+    if (Actors.Num() != ExpectedActors || Actors.ContainsByPredicate([](const AMazePipePiece* Actor) { return !IsValid(Actor); }))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Rebuild the full pipe mesh board before checking it."));
+        return false;
+    }
+    if (!FMath::IsFinite(PipeSteamStepSeconds) || PipeSteamStepSeconds < 0.02f
+        || !FMath::IsFinite(PipeSteamHoldSeconds) || PipeSteamHoldSeconds < 0.0f)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Use a positive steam step duration and a nonnegative result hold duration."));
+        return false;
+    }
+    ResetPipeLights();
+    CheckedLeftPipeLayout = LeftPipeLayout;
+    CheckedRightPipeLayout = RightPipeLayout;
+    if (bPreview && bPipePreviewShowsSolution)
+    {
+        FMazePipePuzzle::RestoreSolution(CheckedLeftPipeLayout);
+        FMazePipePuzzle::RestoreSolution(CheckedRightPipeLayout);
+    }
+    if (!bLeftPipeCompleted)
+    {
+        LeftPipeSteamResult = bLeftPipeActive ? FMazePipePuzzle::TraceSteam(CheckedLeftPipeLayout) : FMazePipeSteamResult();
+    }
+    if (!bRightPipeCompleted)
+    {
+        RightPipeSteamResult = bRightPipeActive ? FMazePipePuzzle::TraceSteam(CheckedRightPipeLayout) : FMazePipeSteamResult();
+    }
+    if ((bLeftPipeActive && LeftPipeSteamResult.SteamDistances.Num() != CheckedLeftPipeLayout.Cells.Num())
+        || (bRightPipeActive && RightPipeSteamResult.SteamDistances.Num() != CheckedRightPipeLayout.Cells.Num()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Regenerate invalid pipe data before starting a steam check."));
+        return false;
+    }
+    LastPipeSteamStep = FMath::Max(bLeftPipeCompleted ? INDEX_NONE : FMazePipePuzzle::GetLastSteamLightStep(LeftPipeSteamResult),
+        bRightPipeCompleted ? INDEX_NONE : FMazePipePuzzle::GetLastSteamLightStep(RightPipeSteamResult));
+    if (LastPipeSteamStep == INDEX_NONE)
+    {
+        return false;
+    }
+    bPipeCheckUsesPreview = bPreview;
+    bPipeSteamChecking = true;
+    bPipeSteamResultShown = false;
+    PipeSteamStep = 0;
+    PipeSteamElapsed = 0.0f;
+    PipeSteamHoldRemaining = 0.0f;
+    ApplyPipeSteamStep();
+    SetComponentTickEnabled(true);
+    return true;
+}
+
+void UMazePuzzleComponent::ResetPipeLights()
+{
+    bPipeSteamChecking = false;
+    bPipeSteamResultShown = false;
+    PipeSteamElapsed = 0.0f;
+    PipeSteamHoldRemaining = 0.0f;
+    const auto ResetActors = [this](const TArray<TObjectPtr<AMazePipePiece>>& Actors)
+        {
+            for (AMazePipePiece* Actor : Actors)
+            {
+                if (!IsValid(Actor))
+                {
+                    continue;
+                }
+                const bool bCompleted = Actor->bRightWall ? bRightPipeCompleted : bLeftPipeCompleted;
+                const FMazePipeSteamResult& Result = Actor->bRightWall ? RightPipeSteamResult : LeftPipeSteamResult;
+                const FMazePipeLayout& Layout = Actor->bRightWall ? CheckedRightPipeLayout : CheckedLeftPipeLayout;
+                const EMazePipeFlowLightState Flow = bCompleted
+                    ? FMazePipePuzzle::GetSteamLightState(Result, Actor->GridCellIndex, 0, true) : EMazePipeFlowLightState::Idle;
+                const bool bChamber = Layout.Cells.IsValidIndex(Actor->GridCellIndex)
+                    && Layout.Cells[Actor->GridCellIndex].Piece == EMazePipePiece::Chamber;
+                Actor->SetIndicatorStates(Flow, bCompleted && bChamber
+                    ? EMazePipeChamberLightState::Connected : EMazePipeChamberLightState::Required);
+            }
+        };
+    ResetActors(PipeMeshPreviewActors);
+    ResetActors(PipeMeshActors);
+    SetComponentTickEnabled(bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+}
+
+void UMazePuzzleComponent::ApplyPipeSteamStep()
+{
+    if (bPipeSteamChecking)
+    {
+        if (bLeftPipeActive)
+        {
+            bLeftPipeCompleted = FMazePipePuzzle::AdvanceSteamCompletion(LeftPipeSteamResult, PipeSteamStep, bLeftPipeCompleted);
+        }
+        if (bRightPipeActive)
+        {
+            bRightPipeCompleted = FMazePipePuzzle::AdvanceSteamCompletion(RightPipeSteamResult, PipeSteamStep, bRightPipeCompleted);
+        }
+    }
+    const int32 LeftStep = bLeftPipeCompleted ? FMazePipePuzzle::GetLastSteamLightStep(LeftPipeSteamResult) : PipeSteamStep;
+    const int32 RightStep = bRightPipeCompleted ? FMazePipePuzzle::GetLastSteamLightStep(RightPipeSteamResult) : PipeSteamStep;
+    const bool bLeftFinished = FMazePipePuzzle::IsSteamCheckFinished(LeftPipeSteamResult, LeftStep);
+    const bool bRightFinished = FMazePipePuzzle::IsSteamCheckFinished(RightPipeSteamResult, RightStep);
+    const TArray<TObjectPtr<AMazePipePiece>>& Actors = bPipeCheckUsesPreview ? PipeMeshPreviewActors : PipeMeshActors;
+    for (AMazePipePiece* Actor : Actors)
+    {
+        if (!IsValid(Actor))
+        {
+            continue;
+        }
+        const FMazePipeLayout& Layout = Actor->bRightWall ? CheckedRightPipeLayout : CheckedLeftPipeLayout;
+        const FMazePipeSteamResult& Result = Actor->bRightWall ? RightPipeSteamResult : LeftPipeSteamResult;
+        const bool bCompleted = Actor->bRightWall ? bRightPipeCompleted : bLeftPipeCompleted;
+        const int32 Step = Actor->bRightWall ? RightStep : LeftStep;
+        const EMazePipeFlowLightState Flow = FMazePipePuzzle::GetSteamLightState(Result, Actor->GridCellIndex, Step, bCompleted);
+        const EMazePipeChamberLightState Chamber = Layout.Cells.IsValidIndex(Actor->GridCellIndex)
+            && Layout.Cells[Actor->GridCellIndex].Piece == EMazePipePiece::Chamber
+            ? FMazePipePuzzle::GetChamberLightState(Layout, Result, Step, Actor->bRightWall ? bRightFinished : bLeftFinished)
+            : EMazePipeChamberLightState::Required;
+        if (Actor->FlowLightState != Flow || Actor->ChamberLightState != Chamber)
+        {
+            Actor->SetIndicatorStates(Flow, Chamber);
+        }
+    }
+}
+
+void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
+{
+    if (!bPipeSteamChecking || !FMath::IsFinite(DeltaTime) || DeltaTime < 0.0f)
+    {
+        return;
+    }
+    if (!bUsePipePuzzle)
+    {
+        ResetPipeLights();
+        return;
+    }
+    if (bPipeSteamResultShown)
+    {
+        PipeSteamHoldRemaining -= DeltaTime;
+        if (PipeSteamHoldRemaining <= 0.0f)
+        {
+            ResetPipeLights();
+        }
+        return;
+    }
+    PipeSteamElapsed += DeltaTime;
+    const float StepSeconds = FMath::IsFinite(PipeSteamStepSeconds) ? FMath::Clamp(PipeSteamStepSeconds, 0.02f, 2.0f) : 0.2f;
+    const float Progress = FMath::Min(static_cast<float>(LastPipeSteamStep), PipeSteamElapsed / StepSeconds);
+    const int32 NextStep = FMath::Max(PipeSteamStep, FMath::FloorToInt(Progress));
+    if (NextStep != PipeSteamStep)
+    {
+        PipeSteamStep = NextStep;
+        ApplyPipeSteamStep();
+    }
+    if (PipeSteamStep == LastPipeSteamStep)
+    {
+        bPipeSteamResultShown = true;
+        const bool bPassed = (!bLeftPipeActive || bLeftPipeCompleted) && (!bRightPipeActive || bRightPipeCompleted);
+        PipeSteamHoldRemaining = !bPassed && FMath::IsFinite(PipeSteamHoldSeconds) ? FMath::Clamp(PipeSteamHoldSeconds, 0.0f, 30.0f) : 0.0f;
+        if (bPassed)
+        {
+            bPipeSteamChecking = false;
+            SetComponentTickEnabled(bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+        }
+        ApplyPipeSteamStep();
+        if (bPipeCheckUsesPreview)
+        {
+            UE_LOG(LogTemp, Display, TEXT("Pipe light preview: %s. No gameplay failure or completion events were sent."), bPassed ? TEXT("Passed") : TEXT("Failed"));
+        }
+        else
+        {
+            OnPipeSteamCheckFinished.Broadcast(bPassed);
+        }
+    }
 }

@@ -5,21 +5,26 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "TimerManager.h"
+#include "Enviornment/MazePipePuzzle.h"
 #include "MazePuzzleComponent.generated.h"
 
 class AMazeGenerator;
 class AMazePuzzleButton;
+class AMazePipePiece;
 class APawn;
 class UArrowComponent;
 class UBoxComponent;
+class ULineBatchComponent;
 class UPrimitiveComponent;
 class UMeshComponent;
 class UMaterialInstanceDynamic;
+class USceneComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleButtonsUnlocked);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleConsoleStateChanged, bool, bRed);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleConsoleActivated);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnRoomPuzzleCompleted);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPipeSteamCheckFinished, bool, bPassed);
 
 // Add this component to a room without changing its BP_RoomBase parent.
 UCLASS(ClassGroup = (Maze), meta = (BlueprintSpawnableComponent))
@@ -44,6 +49,113 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Buttons")
     FName PuzzleDoorTag = TEXT("PuzzleDoor");
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    bool bUsePipePuzzle = false;
+
+    // Square cell size and fitted columns are calculated from the arrow rectangle.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FMazePipeGridSettings PipeGridSettings;
+
+    // Space reserved between the generated pipes and the rectangle edges.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes", meta = (ClampMin = "0.0", Units = "cm"))
+    float PipeBorderPadding = 0.0f;
+
+    // Distance from the rectangle plane toward the inside of the room.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes", meta = (ClampMin = "0.0", Units = "cm"))
+    float PipeWallOffset = 10.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes")
+    TSubclassOf<AMazePipePiece> StraightPipeClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes")
+    TSubclassOf<AMazePipePiece> BendPipeClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes")
+    TSubclassOf<AMazePipePiece> TeePipeClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes")
+    TSubclassOf<AMazePipePiece> ChamberPipeClass;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes")
+    TSubclassOf<AMazePipePiece> CrossPipeClass;
+
+    // Diameter as a fraction of square cell size. Shared by all piece types.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes", meta = (ClampMin = "0.02", ClampMax = "0.35"))
+    float PipeDiameterFraction = 0.12f;
+
+    // Extra distance that the fixed inlet and outlet tails extend into the wall.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Meshes", meta = (ClampMin = "0.0", Units = "cm"))
+    float PipeWallEmbedDepth = 10.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName LeftBottomLeftTag = TEXT("LeftBottomLeft");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName LeftBottomRightTag = TEXT("LeftBottomRight");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName LeftTopLeftTag = TEXT("LeftTopLeft");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName LeftTopRightTag = TEXT("LeftTopRight");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName RightBottomLeftTag = TEXT("RightBottomLeft");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName RightBottomRightTag = TEXT("RightBottomRight");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName RightTopLeftTag = TEXT("RightTopLeft");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
+    FName RightTopRightTag = TEXT("RightTopRight");
+
+    // Only used by the editor preview buttons. Runtime uses the supplied puzzle seed.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes", meta = (DisplayName = "Pipe Preview Seed"))
+    int32 PipePreviewSeed = 1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes", meta = (ClampMin = "1.0", ClampMax = "60.0", Units = "s"))
+    float PipePreviewDuration = 15.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Lights", meta = (ClampMin = "0.02", ClampMax = "2.0", Units = "s"))
+    float PipeSteamStepSeconds = 0.2f;
+
+    // Failed checks keep their temporary colors for this duration. Completed walls stay green.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Lights", meta = (ClampMin = "0.0", ClampMax = "30.0", Units = "s"))
+    float PipeSteamHoldSeconds = 4.0f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    bool bPipeSteamChecking = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    FMazePipeSteamResult LeftPipeSteamResult;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    FMazePipeSteamResult RightPipeSteamResult;
+
+    // Fired once after the steam wave reaches every currently connected branch.
+    UPROPERTY(BlueprintAssignable, Category = "Puzzle|Pipes|Events")
+    FOnPipeSteamCheckFinished OnPipeSteamCheckFinished;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    bool bLeftPipeActive = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    bool bRightPipeActive = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    bool bLeftPipeCompleted = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    bool bRightPipeCompleted = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    FMazePipeLayout LeftPipeLayout;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "Puzzle|Pipes|State")
+    FMazePipeLayout RightPipeLayout;
+
     // Tag only the doorway indicator meshes, including meshes inside child actors.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
     FName StatusLightComponentTag = TEXT("PuzzleStatusLight");
@@ -62,7 +174,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
     FLinearColor CompletedLightColor = FLinearColor(0.02f, 1.0f, 0.05f);
 
-    // Use the existing room box to detect when the player has fully entered or left.
+    // Existing whole-room overlap box. Keep it around the room and through the doorway.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Departure")
     FName CompletedExitAreaTag = TEXT("RoomArea");
 
@@ -118,7 +230,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Puzzle|Events")
     FOnRoomPuzzleCompleted OnPuzzleCompleted;
 
-    // Call after the player has fully entered the pressure plate room.
+    // Call after the player has fully entered the pressure-button room.
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool BeginPuzzle(APawn* Player);
 
@@ -130,6 +242,63 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool CompletePuzzle();
 
+    // Select the existing save difficulty. Easy chooses one wall and Hard uses both.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    bool GeneratePipeLayouts(int32 Seed);
+
+    // Later the existing E and F interaction events will call this function.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    bool RotatePipeCell(bool bRightWall, int32 CellIndex, bool bRotateRight);
+
+    // Returns data only. Tally lights, audio and completion are connected in the next stage.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    FMazePipeSteamResult TracePipeWall(bool bRightWall) const;
+
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    bool GetPipeCellLocation(bool bRightWall, int32 CellIndex, FVector& Location, float& CellSize) const;
+
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    bool BuildPipeMeshes();
+
+    // Test current connections and animate their BFS distances.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
+    bool CheckPipePuzzle();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Steam Check"))
+    void PreviewPipeSteamCheck();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Reset Pipe Lights"))
+    void ResetPipeLights();
+
+    // Select the component on a placed room instance to use these preview buttons.
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Grid"))
+    void PreviewPipeGrid();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Layout"))
+    void PreviewPipeLayout();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Solution"))
+    void PreviewPipeSolution();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Failed Pipe Mesh"))
+    void PreviewFailedPipeMesh();
+
+    // Keep existing Blueprint calls valid while replacing the editor button.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes", meta = (DeprecatedFunction, DeprecationMessage = "Use PreviewFailedPipeMesh."))
+    void PreviewPipeMeshFit();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Meshes"))
+    void PreviewPipeMeshes();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Solved Pipe Meshes"))
+    void PreviewSolvedPipeMeshes();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Clear Preview"))
+    void ClearPreview();
+
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes", meta = (DeprecatedFunction, DeprecationMessage = "Use ClearPreview."))
+    void ClearPipeMeshPreview();
+
     bool PreparePuzzle(AMazeGenerator* Generator, FName SelectedId, TSubclassOf<APawn> AngelClass, int32 Seed, bool bSpawnAllButtons = false, bool bSpawnAllEnemies = false);
     bool StepButtonSpawning(bool& bFinished);
     bool StepEnemySpawning(bool& bFinished);
@@ -138,8 +307,45 @@ public:
 protected:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+    virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
 
 private:
+    bool BuildPipeLayouts(int32 Seed, bool bHard);
+    bool BuildPipeFrame(bool bRightWall, FMazePipeGridFrame& OutFrame, FString& OutError) const;
+    void DrawPipePreview(bool bShowLayout, bool bShowSolution);
+    ULineBatchComponent* GetPipePreviewLines();
+    void ClearPipePreviewObjects();
+    void ResetPipeCompletion();
+    TSubclassOf<AMazePipePiece> GetPipeMeshClass(EMazePipePiece Piece) const;
+    USceneComponent* GetPipeWallParent(bool bRightWall) const;
+    bool SpawnPipePreviewPiece(bool bRightWall, const FMazePipeGridFrame& Frame, int32 CellIndex, const FMazePipeCell& Cell);
+    bool SpawnPipePiece(bool bRightWall, const FMazePipeGridFrame& Frame, int32 CellIndex, const FMazePipeCell& Cell, bool bPreview);
+    void BuildPipeMeshPreview(bool bShowSolution, bool bForceFailure = false);
+    void WarnPipeLightMaterials() const;
+    void ClearRuntimePipeMeshes();
+    void AdvancePipeSteamCheck(float DeltaTime);
+    void ApplyPipeSteamStep();
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TObjectPtr<ULineBatchComponent> PipePreviewLines;
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TArray<TObjectPtr<AMazePipePiece>> PipeMeshActors;
+
+    FMazePipeLayout CheckedLeftPipeLayout;
+    FMazePipeLayout CheckedRightPipeLayout;
+    bool bHasPipeLayoutPreview = false;
+    bool bPipePreviewShowsSolution = false;
+    bool bPipeCheckUsesPreview = false;
+    bool bPipeSteamResultShown = false;
+    int32 PipeSteamStep = 0;
+    int32 LastPipeSteamStep = 0;
+    float PipeSteamElapsed = 0.0f;
+    float PipeSteamHoldRemaining = 0.0f;
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TArray<TObjectPtr<AMazePipePiece>> PipeMeshPreviewActors;
+
     TWeakObjectPtr<AMazeGenerator> MazeGenerator;
 
     UPROPERTY(Transient)
@@ -159,7 +365,6 @@ private:
     bool bDebugSpawnAllEnemies = false;
     bool bPrepared = false;
     bool bArmed = false;
-    bool bRoomVisitActive = false;
 
     TWeakObjectPtr<UBoxComponent> EnemyEntryTrigger;
     bool bWaitingForEnemyEntry = false;
@@ -176,8 +381,6 @@ private:
 
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;
-    bool UpdateRoomVisit(const UBoxComponent& Area);
-    void ClearSpawnedWeepingAngels();
     void ClearSpawnedActors();
 
     UPROPERTY(Transient)
