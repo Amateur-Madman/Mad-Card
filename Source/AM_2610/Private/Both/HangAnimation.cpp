@@ -3,9 +3,6 @@
 
 #include "Both/HangAnimation.h"
 #include "KismetAnimationLibrary.h"
-#include "GameFramework/CharacterMovementComponent.h"
-#include "Actors/Agent.h"
-#include "../AM_2610.h"
 
 void UHangAnimation::NativeInitializeAnimation()
 {
