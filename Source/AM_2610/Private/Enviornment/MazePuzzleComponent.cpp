@@ -15,7 +15,14 @@
 #include "Components/BoxComponent.h"
 #include "Components/ChildActorComponent.h"
 #include "Components/MeshComponent.h"
+#include "Components/LightComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Sound/SoundBase.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "MaterialTypes.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
@@ -1728,6 +1735,7 @@ bool UMazePuzzleComponent::CheckPipePuzzle()
 
 void UMazePuzzleComponent::ResetPipeLights()
 {
+    ClearPipeLeakSteam();
     bPipeSteamChecking = false;
     bPipeSteamResultShown = false;
     bPipeCheckIsStandalone = false;
@@ -1837,6 +1845,7 @@ bool UMazePuzzleComponent::InitializePipeFailureTallies()
 
     // A tally asset can carry its shared tag on the room's Child Actor Component.
     TArray<UChildActorComponent*> ChildComponents;
+    TArray<FPipeTallyLightState> TallyLights;
     Room->GetComponents<UChildActorComponent>(ChildComponents, true);
     for (UChildActorComponent* ChildComponent : ChildComponents)
     {
@@ -1885,6 +1894,22 @@ bool UMazePuzzleComponent::InitializePipeFailureTallies()
         if (!AddTally(Candidates[0]))
         {
             return false;
+        }
+        TArray<ULightComponent*> Lights;
+        Child->GetComponents<ULightComponent>(Lights, true);
+        for (ULightComponent* Light : Lights)
+        {
+            if (!IsValid(Light) || TallyLights.ContainsByPredicate([Light](const FPipeTallyLightState& State)
+                { return State.Light.Get() == Light; }))
+            {
+                continue;
+            }
+            FPipeTallyLightState State;
+            State.Mesh = Candidates[0];
+            State.Light = Light;
+            State.OriginalColor = Light->GetLightColor();
+            State.bOriginalVisible = Light->IsVisible();
+            TallyLights.Add(State);
         }
     }
     if (Tallies.IsEmpty())
@@ -1936,6 +1961,18 @@ bool UMazePuzzleComponent::InitializePipeFailureTallies()
         }
         UMaterialInterface* Original = Mesh->GetMaterial(CachedPipeFailureTallyMaterialIndex);
         UMaterialInterface* Source = IsValid(PipeFailureTallyMaterial) ? PipeFailureTallyMaterial.Get() : Original;
+        if (IsValid(Source))
+        {
+            TArray<FMaterialParameterInfo> Parameters;
+            TArray<FGuid> ParameterIds;
+            Source->GetAllVectorParameterInfo(Parameters, ParameterIds);
+            if (!Parameters.ContainsByPredicate([this](const FMaterialParameterInfo& Parameter)
+                { return Parameter.Name == CachedPipeFailureTallyColorParameter; }))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Pipe tally: Material on %s has no vector parameter %s. Assign a compatible Pipe Failure Tally Material to control the glowing face."),
+                    *Mesh->GetName(), *CachedPipeFailureTallyColorParameter.ToString());
+            }
+        }
         UMaterialInterface* Parent = Source;
         while (UMaterialInstanceDynamic* DynamicParent = Cast<UMaterialInstanceDynamic>(Parent))
         {
@@ -1954,6 +1991,7 @@ bool UMazePuzzleComponent::InitializePipeFailureTallies()
         PipeFailureTallyMaterials.Add(Material);
         PipeFailureTallyOriginalMaterials.Add(Original);
     }
+    PipeFailureTallyLights = TallyLights;
     PipeFailureTallyCount = Tallies.Num();
     UpdatePipeFailureTallies();
     return true;
@@ -1981,13 +2019,32 @@ void UMazePuzzleComponent::UpdatePipeFailureTallies()
         {
             Mesh->SetMaterial(CachedPipeFailureTallyMaterialIndex, Material);
         }
+        const bool bFailed = Index < PipeFailedSteamChecks;
         Material->SetVectorParameterValue(CachedPipeFailureTallyColorParameter,
-            Index < PipeFailedSteamChecks ? PipeFailureTallyFailedColor : PipeFailureTallyOffColor);
+            bFailed ? PipeFailureTallyFailedColor : PipeFailureTallyOffColor);
+        for (const FPipeTallyLightState& State : PipeFailureTallyLights)
+        {
+            if (State.Mesh.Get() == Mesh && State.Light.IsValid())
+            {
+                State.Light->SetLightColor(PipeFailureTallyFailedColor);
+                State.Light->SetVisibility(bFailed);
+            }
+        }
     }
 }
 
 void UMazePuzzleComponent::ClearPipeFailureTallies()
 {
+    ClearPipeLeakSteam();
+    for (const FPipeTallyLightState& State : PipeFailureTallyLights)
+    {
+        if (State.Light.IsValid())
+        {
+            State.Light->SetLightColor(State.OriginalColor);
+            State.Light->SetVisibility(State.bOriginalVisible);
+        }
+    }
+    PipeFailureTallyLights.Reset();
     for (int32 Index = 0; Index < PipeFailureTallyMeshes.Num(); ++Index)
     {
         UMeshComponent* Mesh = PipeFailureTallyMeshes[Index].Get();
@@ -2018,6 +2075,7 @@ void UMazePuzzleComponent::RecordPipeSteamFailure()
     bPipeFailureRecorded = true;
     PipeFailedSteamChecks = FMath::Clamp(PipeFailedSteamChecks, 0, PipeFailureTallyCount - 1) + 1;
     UpdatePipeFailureTallies();
+    PlayPipeFailureFeedback();
     if (PipeFailedSteamChecks == PipeFailureTallyCount)
     {
         // Latch and lock before notifying Blueprint so repeated input cannot start a second sequence.
@@ -2034,6 +2092,147 @@ void UMazePuzzleComponent::RecordPipeSteamFailure()
         }
         OnPipeTrapTriggered.Broadcast();
     }
+}
+
+bool UMazePuzzleComponent::GetPipeLeakOutlet(bool bRightWall, const FMazePipeLeak& Leak, FVector& Location, FVector& Direction) const
+{
+    Location = FVector::ZeroVector;
+    Direction = FVector::ZeroVector;
+    const FMazePipeLayout& Layout = bRightWall ? CheckedRightPipeLayout : CheckedLeftPipeLayout;
+
+    if (Leak.Direction < 0 || Leak.Direction > 3 || !Layout.Cells.IsValidIndex(Leak.CellIndex)
+        || !FMath::IsFinite(PipeLeakSteamOutletOffset) || PipeLeakSteamOutletOffset < 0.0f
+        || !(FMazePipePuzzle::GetPorts(Layout.Cells[Leak.CellIndex]) & (1 << Leak.Direction)))
+    {
+        return false;
+    }
+
+    FMazePipeGridFrame Frame;
+    FString Error;
+    if (!BuildPipeFrame(bRightWall, Frame, Error) || Frame.Columns <= 0 || Frame.Rows <= 0
+        || Frame.Columns != Layout.Columns || Frame.Rows != Layout.Rows
+        || Layout.Cells.Num() != Frame.Columns * Frame.Rows
+        || !FMath::IsFinite(Frame.CellSize) || Frame.CellSize <= 0.0f)
+    {
+        return false;
+    }
+
+    const FVector Directions[] = { Frame.Up, Frame.Right, -Frame.Up, -Frame.Right };
+    Direction = Directions[Leak.Direction].GetSafeNormal();
+    Location = Frame.GetCellCenter(Leak.CellIndex)
+        + Direction * (Frame.CellSize * 0.5f + PipeLeakSteamOutletOffset);
+
+    if (FVector::DotProduct(Direction, FVector::UpVector) < -0.5)
+    {
+        // Start at the center of the bottom opening.
+        Location = Frame.GetCellCenter(Leak.CellIndex)
+            + Direction * (Frame.CellSize * 0.5f);
+
+        const FVector SideAxis = FVector::CrossProduct(
+            FVector::UpVector, Frame.Inward).GetSafeNormal();
+
+        if (SideAxis.ContainsNaN() || SideAxis.Size() <= 0.0001)
+        {
+            return false;
+        }
+
+        // Choose one side for this burst.
+        const float SideSign = FMath::RandRange(0, 1) == 0 ? -1.0f : 1.0f;
+
+        // Clear the lip before the upward force bends the smoke.
+        Direction = (SideAxis * SideSign + Direction * 0.35f).GetSafeNormal();
+    }
+
+    return !Location.ContainsNaN() && !Direction.ContainsNaN() && Direction.Size() > 0.0001;
+}
+
+void UMazePuzzleComponent::SpawnPipeSteamLeaks(bool bRightWall, const FMazePipeSteamResult& Result)
+{
+    if (!IsValid(PipeLeakSteamSystem) || Result.bPassed)
+    {
+        return;
+    }
+
+    const float Scale = FMath::IsFinite(PipeLeakSteamScale) ? FMath::Clamp(PipeLeakSteamScale, 0.01f, 10.0f) : 1.0f;
+    const float Density = FMath::IsFinite(PipeLeakSteamDensity) ? FMath::Clamp(PipeLeakSteamDensity, 0.0f, 100.0f) : 0.5f;
+    const float SpeedMin = FMath::IsFinite(PipeLeakSteamSpeedMin) ? FMath::Clamp(PipeLeakSteamSpeedMin, 0.0f, 1000.0f) : 10.0f;
+    const float SpeedMax = FMath::IsFinite(PipeLeakSteamSpeedMax) ? FMath::Clamp(PipeLeakSteamSpeedMax, SpeedMin, 1000.0f) : FMath::Max(SpeedMin, 30.0f);
+    const float Strength = FMath::IsFinite(PipeLeakSteamDirectionStrength) ? FMath::Clamp(PipeLeakSteamDirectionStrength, 0.0f, 1000.0f) : 100.0f;
+
+    for (const FMazePipeLeak& Leak : Result.Leaks)
+    {
+        FVector Location;
+        FVector Direction;
+        if (!Result.SteamDistances.IsValidIndex(Leak.CellIndex) || Result.SteamDistances[Leak.CellIndex] < 0
+            || !GetPipeLeakOutlet(bRightWall, Leak, Location, Direction))
+        {
+            continue;
+        }
+
+        UNiagaraComponent* Steam = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this, PipeLeakSteamSystem.Get(), Location, Direction.Rotation(),
+            FVector(Scale), false, false, ENCPoolMethod::None, false);
+
+        if (!IsValid(Steam))
+        {
+            continue;
+        }
+
+        Steam->SetVariableLinearColor(FName(TEXT("User.TrailColor")), PipeLeakSteamColor);
+        Steam->SetVariableFloat(FName(TEXT("User.TrailDensity")), Density);
+        Steam->SetVariableFloat(FName(TEXT("User.TrailSpeedMin")), SpeedMin);
+        Steam->SetVariableFloat(FName(TEXT("User.TrailSpeedMax")), SpeedMax);
+        Steam->SetVariableVec3(FName(TEXT("User.TrailVector")),
+            bPipeLeakSteamVectorIsLocal ? FVector(Strength, 0, 0) : Direction * Strength);
+
+        PipeLeakSteamComponents.Add(Steam);
+        Steam->Activate(true);
+    }
+}
+
+void UMazePuzzleComponent::PlayPipeFailureFeedback()
+{
+    if (!bUsePipePuzzle || !bPipeFailureRecorded || bPipeCheckUsesPreview || bPipeCheckIsStandalone
+        || !GetWorld() || !GetWorld()->IsGameWorld())
+    {
+        return;
+    }
+    ClearPipeLeakSteam();
+    if (IsValid(PipeWrongChoiceSound))
+    {
+        const float Volume = FMath::IsFinite(PipeWrongChoiceVolume) ? FMath::Clamp(PipeWrongChoiceVolume, 0.0f, 2.0f) : 1.0f;
+        UGameplayStatics::PlaySound2D(this, PipeWrongChoiceSound.Get(), Volume);
+    }
+    if (bLeftPipeActive && !bLeftPipeCompleted)
+    {
+        SpawnPipeSteamLeaks(false, LeftPipeSteamResult);
+    }
+    if (bRightPipeActive && !bRightPipeCompleted)
+    {
+        SpawnPipeSteamLeaks(true, RightPipeSteamResult);
+    }
+    if (!PipeLeakSteamComponents.IsEmpty())
+    {
+        const float Duration = FMath::IsFinite(PipeLeakSteamDuration) ? FMath::Clamp(PipeLeakSteamDuration, 0.1f, 30.0f) : 4.0f;
+        // A timer also stops the looping effect when the final failure disables component ticking.
+        GetWorld()->GetTimerManager().SetTimer(PipeLeakSteamTimer, this, &UMazePuzzleComponent::ClearPipeLeakSteam, Duration, false);
+    }
+}
+
+void UMazePuzzleComponent::ClearPipeLeakSteam()
+{
+    if (GetWorld())
+    {
+        GetWorld()->GetTimerManager().ClearTimer(PipeLeakSteamTimer);
+    }
+    for (UNiagaraComponent* Steam : PipeLeakSteamComponents)
+    {
+        if (IsValid(Steam))
+        {
+            Steam->DestroyComponent();
+        }
+    }
+    PipeLeakSteamComponents.Reset();
 }
 
 bool UMazePuzzleComponent::ArePipeWallsCompleted() const

@@ -1,11 +1,6 @@
-MAD_CARD_SEEDS|5|PressurePlates|hard|10|850F7283
-16|PressurePlates||0|1.459214|102D17EC
-21|PressurePlates|BP_TrapRoom|2|1.346030|88A2B80C
-35|PressurePlates|BP_TrapRoom|1|1.417987|88A2B80C
-48|PressurePlates|BP_CardRoom|2|1.393248|88A2B80C
-58|PressurePlates||0|1.537780|88A2B80C
-81|PressurePlates|BP_CardRoom|1|1.368918|88A2B80C
-117|PressurePlates|BP_CardRoom|2|1.471653|147FB3F6
-129|PressurePlates|BP_CardRoom|1|1.392268|147FB3F6
-131|PressurePlates|BP_TrapRoom|2|1.388005|147FB3F6
-145|PressurePlates|BP_TrapRoom|1|1.555763|147FB3F6
+MAD_CARD_SEEDS|5|PressurePlates|hard|5|D3B5FDD5
+16|PressurePlates||0|1.360573|A3614C83
+21|PressurePlates|BP_TrapRoom|2|1.265591|3BEEE363
+35|PressurePlates|BP_TrapRoom|1|1.359198|3BEEE363
+48|PressurePlates|BP_CardRoom|2|1.369133|3BEEE363
+58|PressurePlates||0|1.479601|3BEEE363

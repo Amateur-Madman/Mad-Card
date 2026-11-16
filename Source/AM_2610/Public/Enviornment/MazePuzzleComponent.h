@@ -15,11 +15,15 @@ class APawn;
 class UArrowComponent;
 class UBoxComponent;
 class ULineBatchComponent;
+class ULightComponent;
 class UPrimitiveComponent;
 class UMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class USceneComponent;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class USoundBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleButtonsUnlocked);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleConsoleStateChanged, bool, bRed);
@@ -155,6 +159,52 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
     FLinearColor PipeFailureTallyFailedColor = FLinearColor(3.0f, 0.0f, 0.0f);
+
+    // One cue per recorded failed test, including the final failure that starts the trap.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback")
+    TObjectPtr<USoundBase> PipeWrongChoiceSound;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+    float PipeWrongChoiceVolume = 1.0f;
+
+    // Assign NS_Thruster_SmokeTrail. Each traced leak gets its own temporary component.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback")
+    TObjectPtr<UNiagaraSystem> PipeLeakSteamSystem;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.1", ClampMax = "30.0", Units = "s"))
+    float PipeLeakSteamDuration = 4.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.01", ClampMax = "10.0"))
+    float PipeLeakSteamScale = 1.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", Units = "cm"))
+    float PipeLeakSteamOutletOffset = 1.0f;
+
+    // Keep rising smoke from a downward opening in front of the pipe surface.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback",
+        meta = (ClampMin = "0.0", ClampMax = "20.0", Units = "cm", DisplayName = "Downward Leak Front Clearance",
+            ToolTip = "Extra room facing clearance beyond the pipe radius for downward leaks. This keeps rising smoke in front of the pipe."))
+    float PipeLeakSteamDownwardFrontClearance = 2.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback")
+    FLinearColor PipeLeakSteamColor = FLinearColor::White;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", ClampMax = "100.0"))
+    float PipeLeakSteamDensity = 0.5f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", ClampMax = "1000.0"))
+    float PipeLeakSteamSpeedMin = 10.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", ClampMax = "1000.0"))
+    float PipeLeakSteamSpeedMax = 30.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback", meta = (ClampMin = "0.0", ClampMax = "1000.0"))
+    float PipeLeakSteamDirectionStrength = 100.0f;
+
+    // Use local X when the Niagara asset interprets TrailVector in emitter space.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Feedback",
+        meta = (DisplayName = "Pipe Leak Steam Vector Is Local", ToolTip = "Use local X for TrailVector. The spawned component rotation already aims out of the pipe opening."))
+    bool bPipeLeakSteamVectorIsLocal = false;
 
     // Five tagged assets give five failures; three tagged assets give three failures.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
@@ -380,6 +430,10 @@ private:
     bool ArePipeWallsCompleted() const;
     bool IsStandalonePipeTest() const;
     void RecordPipeSteamFailure();
+    void PlayPipeFailureFeedback();
+    void SpawnPipeSteamLeaks(bool bRightWall, const FMazePipeSteamResult& Result);
+    bool GetPipeLeakOutlet(bool bRightWall, const FMazePipeLeak& Leak, FVector& Location, FVector& Direction) const;
+    void ClearPipeLeakSteam();
     bool InitializePipeFailureTallies();
     void UpdatePipeFailureTallies();
     void ClearPipeFailureTallies();
@@ -391,6 +445,21 @@ private:
     TArray<TObjectPtr<UMaterialInterface>> PipeFailureTallyOriginalMaterials;
 
     TArray<TWeakObjectPtr<UMeshComponent>> PipeFailureTallyMeshes;
+
+    struct FPipeTallyLightState
+    {
+        TWeakObjectPtr<UMeshComponent> Mesh;
+        TWeakObjectPtr<ULightComponent> Light;
+        FLinearColor OriginalColor;
+        bool bOriginalVisible = false;
+    };
+
+    TArray<FPipeTallyLightState> PipeFailureTallyLights;
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TArray<TObjectPtr<UNiagaraComponent>> PipeLeakSteamComponents;
+
+    FTimerHandle PipeLeakSteamTimer;
     int32 CachedPipeFailureTallyMaterialIndex = INDEX_NONE;
     FName CachedPipeFailureTallyColorParameter = NAME_None;
     bool bPipeFailureRecorded = false;
