@@ -3,6 +3,7 @@
 #include "Enviornment/MazePipeConsole.h"
 #include "Enviornment/MazePuzzleComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/AudioComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
@@ -35,6 +36,11 @@ AMazePipeConsole::AMazePipeConsole()
     InteractionBox->SetCanEverAffectNavigation(false);
     InteractionBox->SetHiddenInGame(true);
     InteractionBox->SetVisibility(false);
+
+    SteamTestAudio = CreateDefaultSubobject<UAudioComponent>(TEXT("SteamTestAudio"));
+    SteamTestAudio->SetupAttachment(SceneRoot);
+    SteamTestAudio->bAutoActivate = false;
+    SteamTestAudio->bStopWhenOwnerDestroyed = true;
 }
 
 UMazePuzzleComponent* AMazePipeConsole::GetPipePuzzle() const
@@ -89,7 +95,10 @@ void AMazePipeConsole::Interact_Implementation(AActor* Interactor)
     {
         if (UMazePuzzleComponent* Puzzle = GetPipePuzzle())
         {
-            Puzzle->ActivateConsole(Cast<APawn>(Interactor));
+            if (Puzzle->ActivateConsole(Cast<APawn>(Interactor)) && Puzzle->bPipeSteamChecking && IsValid(SteamTestAudio))
+            {
+                SteamTestAudio->Play(0.0f);
+            }
         }
     }
 }

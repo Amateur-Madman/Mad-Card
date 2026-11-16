@@ -8,6 +8,7 @@
 #include "MazePipeConsole.generated.h"
 
 class UBoxComponent;
+class UAudioComponent;
 class UMazePuzzleComponent;
 class USceneComponent;
 class UStaticMeshComponent;
@@ -33,6 +34,10 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe Console")
     TObjectPtr<UBoxComponent> InteractionBox;
+
+    // Assign the console test cue here. It plays only when a new steam check starts.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe Console|Audio")
+    TObjectPtr<UAudioComponent> SteamTestAudio;
 
     // A child actor finds its room automatically. Set this only for a separate level actor.
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Pipe Console")

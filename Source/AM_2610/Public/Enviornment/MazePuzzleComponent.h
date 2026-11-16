@@ -18,6 +18,7 @@ class ULineBatchComponent;
 class UPrimitiveComponent;
 class UMeshComponent;
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
 class USceneComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleButtonsUnlocked);
@@ -25,6 +26,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPuzzleConsoleStateChanged, bool, 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPuzzleConsoleActivated);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnRoomPuzzleCompleted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPipeSteamCheckFinished, bool, bPassed);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPipeTrapTriggered);
 
 // Add this component to a room without changing its BP_RoomBase parent.
 UCLASS(ClassGroup = (Maze), meta = (BlueprintSpawnableComponent))
@@ -128,6 +130,46 @@ public:
     // Failed checks keep their temporary colors for this duration. Completed walls stay green.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Lights", meta = (ClampMin = "0.0", ClampMax = "30.0", Units = "s"))
     float PipeSteamHoldSeconds = 4.0f;
+
+    // Tag a tally mesh or its Child Actor Component. Each resolved mesh counts once.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    FName PipeFailureTallyTag = TEXT("PipeFailureTally");
+
+    // Marks are ordered along their row in room coordinates. Reverse if the first end is wrong.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    bool bReversePipeFailureTallies = false;
+
+    // Only the material slot for the glowing mark is replaced.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies", meta = (ClampMin = "0"))
+    int32 PipeFailureTallyMaterialIndex = 0;
+
+    // Optional shared source material. Empty uses each tagged mesh's current material.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    TObjectPtr<UMaterialInterface> PipeFailureTallyMaterial;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    FName PipeFailureTallyColorParameter = TEXT("TallyColor");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    FLinearColor PipeFailureTallyOffColor = FLinearColor::Black;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Failure Tallies")
+    FLinearColor PipeFailureTallyFailedColor = FLinearColor(3.0f, 0.0f, 0.0f);
+
+    // Five tagged assets give five failures; three tagged assets give three failures.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    int32 PipeFailureTallyCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    bool bPipeTrapTriggered = false;
+
+    // Connect this once to the room's trap sequence. The final tally is red before it fires.
+    UPROPERTY(BlueprintAssignable, Category = "Puzzle|Pipes|Events")
+    FOnPipeTrapTriggered OnPipeTrapTriggered;
+
+    // One shared count per room. Both failed Hard walls still consume one tally per test.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    int32 PipeFailedSteamChecks = 0;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
     bool bPipeSteamChecking = false;
@@ -337,6 +379,21 @@ private:
     void ApplyPipeSteamStep();
     bool ArePipeWallsCompleted() const;
     bool IsStandalonePipeTest() const;
+    void RecordPipeSteamFailure();
+    bool InitializePipeFailureTallies();
+    void UpdatePipeFailureTallies();
+    void ClearPipeFailureTallies();
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> PipeFailureTallyMaterials;
+
+    UPROPERTY(Transient, DuplicateTransient)
+    TArray<TObjectPtr<UMaterialInterface>> PipeFailureTallyOriginalMaterials;
+
+    TArray<TWeakObjectPtr<UMeshComponent>> PipeFailureTallyMeshes;
+    int32 CachedPipeFailureTallyMaterialIndex = INDEX_NONE;
+    FName CachedPipeFailureTallyColorParameter = NAME_None;
+    bool bPipeFailureRecorded = false;
 
     UPROPERTY(Transient, DuplicateTransient)
     TObjectPtr<ULineBatchComponent> PipePreviewLines;

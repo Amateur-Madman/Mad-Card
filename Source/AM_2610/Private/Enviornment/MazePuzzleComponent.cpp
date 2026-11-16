@@ -3,6 +3,7 @@
 #include "Enviornment/MazePuzzleComponent.h"
 #include "Enviornment/MazePipePiece.h"
 #include "Enviornment/MazePipeFitting.h"
+#include "Math/Box.h"
 #include "Math/RotationMatrix.h"
 #include "Enviornment/MazeActors.h"
 #include "Enviornment/MazeGenerator.h"
@@ -12,6 +13,7 @@
 #include "Components/LineBatchComponent.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/ChildActorComponent.h"
 #include "Components/MeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/Controller.h"
@@ -130,6 +132,11 @@ bool UMazePuzzleComponent::PreparePuzzle(AMazeGenerator* Generator, FName Select
     InitializeStatusLights();
     IMazeInterface::Execute_SetMazeDoorLocked(Room, PuzzleDoorTag, false);
     UpdateStatusLights();
+    if (!InitializePipeFailureTallies())
+    {
+        bPrepared = false;
+        return false;
+    }
     OnConsoleStateChanged.Broadcast(false);
     return true;
 }
@@ -469,7 +476,7 @@ void UMazePuzzleComponent::ArmPuzzle()
 
 bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
 {
-    if (!bArmed || (!bUsePressureButtons && !bUsePipePuzzle) || bPuzzleStarted || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    if (!bArmed || (!bUsePressureButtons && !bUsePipePuzzle) || (bUsePipePuzzle && bPipeTrapTriggered) || bPuzzleStarted || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
         return false;
     }
@@ -494,7 +501,7 @@ bool UMazePuzzleComponent::IsStandalonePipeTest() const
 
 bool UMazePuzzleComponent::CanActivateConsole(APawn* Player) const
 {
-    if (bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled()
+    if (bPuzzleCompleted || (bUsePipePuzzle && bPipeTrapTriggered) || !IsValid(Player) || !Player->IsPlayerControlled()
         || !GetWorld() || !GetWorld()->IsGameWorld() || Player->GetWorld() != GetWorld())
     {
         return false;
@@ -509,7 +516,7 @@ bool UMazePuzzleComponent::CanActivateConsole(APawn* Player) const
     }
     if (bUsePipePuzzle)
     {
-        return !bUsePressureButtons && !bPipeSteamChecking && (bLeftPipeActive || bRightPipeActive);
+        return !bUsePressureButtons && PipeFailureTallyCount > 0 && !bPipeSteamChecking && (bLeftPipeActive || bRightPipeActive);
     }
     return bPuzzleStarted && bButtonsUnlocked && !bPuzzleDoorUnlocked;
 }
@@ -632,7 +639,7 @@ bool UMazePuzzleComponent::CompletePuzzle()
     {
         if (bUsePressureButtons || !bPuzzleStarted || !GetWorld() || !GetWorld()->IsGameWorld()
             || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || bPipeCheckUsesPreview || bPipeCheckIsStandalone
-            || bPipeSteamChecking || !bPipeSteamResultShown || !ArePipeWallsCompleted())
+            || bPipeSteamChecking || bPipeTrapTriggered || !bPipeSteamResultShown || !ArePipeWallsCompleted())
         {
             return false;
         }
@@ -641,8 +648,16 @@ bool UMazePuzzleComponent::CompletePuzzle()
     {
         return false;
     }
+    // The shared generator requires the logical door flag before accepting completion.
+    // Physical unlocking and success events stay after registration succeeds.
+    const bool bPreviouslyDoorUnlocked = bPuzzleDoorUnlocked;
+    if (bUsePipePuzzle)
+    {
+        bPuzzleDoorUnlocked = true;
+    }
     if (!MazeGenerator->RegisterPuzzleCompleted(Cast<AMazeActors>(GetOwner())))
     {
+        bPuzzleDoorUnlocked = bPreviouslyDoorUnlocked;
         return false;
     }
 
@@ -923,6 +938,7 @@ void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     SetComponentTickEnabled(false);
     ClearEnemyEntryTrigger();
     ClearCompletedExitArea();
+    ClearPipeFailureTallies();
     StatusLightMaterials.Reset();
     StatusLightMeshes.Reset();
     ClearSpawnedActors();
@@ -1053,7 +1069,7 @@ bool UMazePuzzleComponent::GeneratePipeLayouts(int32 Seed)
 
 bool UMazePuzzleComponent::CanRotatePipeCell(bool bRightWall, int32 CellIndex) const
 {
-    if (!bUsePipePuzzle || bPipeSteamChecking || bPuzzleCompleted || (bRightWall ? bRightPipeCompleted : bLeftPipeCompleted)
+    if (!bUsePipePuzzle || bPipeSteamChecking || bPipeTrapTriggered || bPuzzleCompleted || (bRightWall ? bRightPipeCompleted : bLeftPipeCompleted)
         || !(bRightWall ? bRightPipeActive : bLeftPipeActive))
     {
         return false;
@@ -1421,6 +1437,7 @@ void UMazePuzzleComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
 {
     ClearPipePreviewObjects();
     ClearRuntimePipeMeshes();
+    ClearPipeFailureTallies();
     Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
 
@@ -1631,7 +1648,7 @@ void UMazePuzzleComponent::PreviewPipeSteamCheck()
 
 bool UMazePuzzleComponent::CheckPipePuzzle()
 {
-    if (!bUsePipePuzzle || bPipeSteamChecking || bPuzzleCompleted || !IsValid(GetWorld()))
+    if (!bUsePipePuzzle || bPipeSteamChecking || bPipeTrapTriggered || bPuzzleCompleted || !IsValid(GetWorld()))
     {
         return false;
     }
@@ -1698,6 +1715,7 @@ bool UMazePuzzleComponent::CheckPipePuzzle()
     }
     bPipeCheckUsesPreview = bPreview;
     bPipeCheckIsStandalone = IsStandalonePipeTest();
+    bPipeFailureRecorded = false;
     bPipeSteamChecking = true;
     bPipeSteamResultShown = false;
     PipeSteamStep = 0;
@@ -1779,6 +1797,245 @@ void UMazePuzzleComponent::ApplyPipeSteamStep()
     }
 }
 
+bool UMazePuzzleComponent::InitializePipeFailureTallies()
+{
+    ClearPipeFailureTallies();
+    PipeFailedSteamChecks = 0;
+    bPipeFailureRecorded = false;
+    bPipeTrapTriggered = false;
+    if (!bUsePipePuzzle)
+    {
+        return true;
+    }
+    AActor* Room = GetOwner();
+    if (!IsValid(Room) || !GetWorld() || !GetWorld()->IsGameWorld() || PipeFailureTallyTag.IsNone()
+        || PipeFailureTallyColorParameter.IsNone() || PipeFailureTallyMaterialIndex < 0)
+    {
+        return false;
+    }
+
+    TArray<UMeshComponent*> Meshes;
+    TArray<UMeshComponent*> Tallies;
+    const auto AddTally = [this, &Tallies](UMeshComponent* Mesh)
+        {
+            if (Mesh->ComponentHasTag(StatusLightComponentTag))
+            {
+                UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s cannot also use the doorway status tag."), *Mesh->GetName());
+                return false;
+            }
+            Tallies.AddUnique(Mesh);
+            return true;
+        };
+    Room->GetComponents<UMeshComponent>(Meshes, true);
+    for (UMeshComponent* Mesh : Meshes)
+    {
+        if (IsValid(Mesh) && Mesh->ComponentHasTag(PipeFailureTallyTag) && !AddTally(Mesh))
+        {
+            return false;
+        }
+    }
+
+    // A tally asset can carry its shared tag on the room's Child Actor Component.
+    TArray<UChildActorComponent*> ChildComponents;
+    Room->GetComponents<UChildActorComponent>(ChildComponents, true);
+    for (UChildActorComponent* ChildComponent : ChildComponents)
+    {
+        if (!IsValid(ChildComponent) || !ChildComponent->ComponentHasTag(PipeFailureTallyTag))
+        {
+            continue;
+        }
+        if (ChildComponent->ComponentHasTag(StatusLightComponentTag))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s cannot also use the doorway status tag."), *ChildComponent->GetName());
+            return false;
+        }
+        AActor* Child = ChildComponent->GetChildActor();
+        if (!IsValid(Child))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s in %s has no child actor. Assign its tally light Child Actor Class."),
+                *ChildComponent->GetName(), *Room->GetPathName());
+            return false;
+        }
+        TArray<UMeshComponent*> ChildMeshes;
+        TArray<UMeshComponent*> Candidates;
+        Child->GetComponents<UMeshComponent>(ChildMeshes, true);
+        for (UMeshComponent* Mesh : ChildMeshes)
+        {
+            if (IsValid(Mesh) && Mesh->ComponentHasTag(PipeFailureTallyTag))
+            {
+                Candidates.AddUnique(Mesh);
+            }
+        }
+        if (Candidates.IsEmpty())
+        {
+            for (UMeshComponent* Mesh : ChildMeshes)
+            {
+                if (IsValid(Mesh))
+                {
+                    Candidates.AddUnique(Mesh);
+                }
+            }
+        }
+        if (Candidates.Num() != 1)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s in %s resolves to %d meshes. A tagged Child Actor Component needs one mesh, or exactly one inner mesh tagged %s."),
+                *ChildComponent->GetName(), *Room->GetPathName(), Candidates.Num(), *PipeFailureTallyTag.ToString());
+            return false;
+        }
+        if (!AddTally(Candidates[0]))
+        {
+            return false;
+        }
+    }
+    if (Tallies.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s has no meshes or Child Actor Components tagged %s. Save the tally Component Tags in the room Blueprint defaults."),
+            *Room->GetPathName(), *PipeFailureTallyTag.ToString());
+        return false;
+    }
+
+    // Use the widest local axis so a rotated room keeps the same visible tally order.
+    const FTransform RoomTransform = Room->GetActorTransform();
+    FBox LocalBounds(ForceInit);
+    for (UMeshComponent* Mesh : Tallies)
+    {
+        const FVector Position = RoomTransform.InverseTransformPosition(Mesh->GetComponentLocation());
+        if (Position.ContainsNaN())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s has an invalid position."), *Mesh->GetName());
+            return false;
+        }
+        LocalBounds += Position;
+    }
+    const FVector Size = LocalBounds.GetSize();
+    int32 Axis = Size.Y > Size.X ? 1 : 0;
+    if (Size.Z > Size[Axis])
+    {
+        Axis = 2;
+    }
+    Tallies.Sort([this, RoomTransform, Axis](const UMeshComponent& A, const UMeshComponent& B)
+        {
+            const double First = RoomTransform.InverseTransformPosition(A.GetComponentLocation())[Axis];
+            const double Second = RoomTransform.InverseTransformPosition(B.GetComponentLocation())[Axis];
+            if (First != Second)
+            {
+                return bReversePipeFailureTallies ? First > Second : First < Second;
+            }
+            return bReversePipeFailureTallies ? B.GetName() < A.GetName() : A.GetName() < B.GetName();
+        });
+
+    CachedPipeFailureTallyMaterialIndex = PipeFailureTallyMaterialIndex;
+    CachedPipeFailureTallyColorParameter = PipeFailureTallyColorParameter;
+    for (UMeshComponent* Mesh : Tallies)
+    {
+        if (CachedPipeFailureTallyMaterialIndex >= Mesh->GetNumMaterials())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: %s has no material slot %d."), *Mesh->GetName(), CachedPipeFailureTallyMaterialIndex);
+            ClearPipeFailureTallies();
+            return false;
+        }
+        UMaterialInterface* Original = Mesh->GetMaterial(CachedPipeFailureTallyMaterialIndex);
+        UMaterialInterface* Source = IsValid(PipeFailureTallyMaterial) ? PipeFailureTallyMaterial.Get() : Original;
+        UMaterialInterface* Parent = Source;
+        while (UMaterialInstanceDynamic* DynamicParent = Cast<UMaterialInstanceDynamic>(Parent))
+        {
+            Parent = DynamicParent->Parent;
+        }
+        UMaterialInstanceDynamic* Material = IsValid(Parent) ? UMaterialInstanceDynamic::Create(Parent, this) : nullptr;
+        if (!IsValid(Material))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe tally: Assign a valid material for %s."), *Mesh->GetName());
+            ClearPipeFailureTallies();
+            return false;
+        }
+        Material->CopyMaterialUniformParameters(Source);
+        Mesh->SetMaterial(CachedPipeFailureTallyMaterialIndex, Material);
+        PipeFailureTallyMeshes.Add(Mesh);
+        PipeFailureTallyMaterials.Add(Material);
+        PipeFailureTallyOriginalMaterials.Add(Original);
+    }
+    PipeFailureTallyCount = Tallies.Num();
+    UpdatePipeFailureTallies();
+    return true;
+}
+
+void UMazePuzzleComponent::UpdatePipeFailureTallies()
+{
+    if (CachedPipeFailureTallyMaterialIndex < 0 || CachedPipeFailureTallyColorParameter.IsNone())
+    {
+        return;
+    }
+    for (int32 Index = 0; Index < PipeFailureTallyMaterials.Num(); ++Index)
+    {
+        UMaterialInstanceDynamic* Material = PipeFailureTallyMaterials[Index];
+        if (!IsValid(Material) || !PipeFailureTallyMeshes.IsValidIndex(Index))
+        {
+            continue;
+        }
+        UMeshComponent* Mesh = PipeFailureTallyMeshes[Index].Get();
+        if (!IsValid(Mesh))
+        {
+            continue;
+        }
+        if (Mesh->GetMaterial(CachedPipeFailureTallyMaterialIndex) != Material)
+        {
+            Mesh->SetMaterial(CachedPipeFailureTallyMaterialIndex, Material);
+        }
+        Material->SetVectorParameterValue(CachedPipeFailureTallyColorParameter,
+            Index < PipeFailedSteamChecks ? PipeFailureTallyFailedColor : PipeFailureTallyOffColor);
+    }
+}
+
+void UMazePuzzleComponent::ClearPipeFailureTallies()
+{
+    for (int32 Index = 0; Index < PipeFailureTallyMeshes.Num(); ++Index)
+    {
+        UMeshComponent* Mesh = PipeFailureTallyMeshes[Index].Get();
+        if (IsValid(Mesh) && CachedPipeFailureTallyMaterialIndex >= 0 && PipeFailureTallyMaterials.IsValidIndex(Index)
+            && PipeFailureTallyOriginalMaterials.IsValidIndex(Index)
+            && Mesh->GetMaterial(CachedPipeFailureTallyMaterialIndex) == PipeFailureTallyMaterials[Index])
+        {
+            Mesh->SetMaterial(CachedPipeFailureTallyMaterialIndex, PipeFailureTallyOriginalMaterials[Index]);
+        }
+    }
+    PipeFailureTallyMeshes.Reset();
+    PipeFailureTallyMaterials.Reset();
+    PipeFailureTallyOriginalMaterials.Reset();
+    PipeFailureTallyCount = 0;
+    CachedPipeFailureTallyMaterialIndex = INDEX_NONE;
+    CachedPipeFailureTallyColorParameter = NAME_None;
+}
+
+void UMazePuzzleComponent::RecordPipeSteamFailure()
+{
+    if (!bUsePipePuzzle || bUsePressureButtons || !bPrepared || !bArmed || !bPuzzleStarted || bPuzzleCompleted
+        || !bPipeSteamResultShown || bPipeCheckUsesPreview || bPipeCheckIsStandalone || bPipeFailureRecorded
+        || bPipeTrapTriggered || PipeFailureTallyCount <= 0 || !GetWorld() || !GetWorld()->IsGameWorld()
+        || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || ArePipeWallsCompleted())
+    {
+        return;
+    }
+    bPipeFailureRecorded = true;
+    PipeFailedSteamChecks = FMath::Clamp(PipeFailedSteamChecks, 0, PipeFailureTallyCount - 1) + 1;
+    UpdatePipeFailureTallies();
+    if (PipeFailedSteamChecks == PipeFailureTallyCount)
+    {
+        // Latch and lock before notifying Blueprint so repeated input cannot start a second sequence.
+        bPipeTrapTriggered = true;
+        bPuzzleDoorUnlocked = false;
+        bPipeSteamChecking = false;
+        PipeSteamHoldRemaining = 0.0f;
+        IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
+        UpdateStatusLights();
+        SetComponentTickEnabled(bEnemySpawningPending);
+        if (!OnPipeTrapTriggered.IsBound())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe trap: Bind On Pipe Trap Triggered to this room's trap sequence."));
+        }
+        OnPipeTrapTriggered.Broadcast();
+    }
+}
+
 bool UMazePuzzleComponent::ArePipeWallsCompleted() const
 {
     return bUsePipePuzzle && (bLeftPipeActive || bRightPipeActive)
@@ -1837,7 +2094,13 @@ void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
         {
             if (bPassed && !CompletePuzzle() && !bPuzzleCompleted)
             {
-                UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Steam passed but room completion could not be registered. Start the check through the console in a prepared maze room."));
+                UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Steam passed but completion was rejected for %s. Prepared=%d Armed=%d Started=%d Generator=%s LoopState=%d."),
+                    *GetNameSafe(GetOwner()), bPrepared, bArmed, bPuzzleStarted, *GetNameSafe(MazeGenerator.Get()),
+                    MazeGenerator.IsValid() ? static_cast<int32>(MazeGenerator->LoopState) : INDEX_NONE);
+            }
+            if (!bPassed)
+            {
+                RecordPipeSteamFailure();
             }
             OnPipeSteamCheckFinished.Broadcast(bPassed);
         }
