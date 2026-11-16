@@ -469,7 +469,7 @@ void UMazePuzzleComponent::ArmPuzzle()
 
 bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
 {
-    if (!bArmed || !bUsePressureButtons || bPuzzleStarted || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    if (!bArmed || (!bUsePressureButtons && !bUsePipePuzzle) || bPuzzleStarted || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
         return false;
     }
@@ -477,28 +477,72 @@ bool UMazePuzzleComponent::BeginPuzzle(APawn* Player)
     // Lock once on entry. Extra overlaps and later re-entry do not reset it.
     bPuzzleStarted = true;
     bPuzzleDoorUnlocked = false;
-    bConsoleRed = true;
+    bConsoleRed = bUsePressureButtons;
     IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
     UpdateStatusLights();
-    OnConsoleStateChanged.Broadcast(true);
+    OnConsoleStateChanged.Broadcast(bConsoleRed);
     SetComponentTickEnabled(true);
     return true;
 }
 
-bool UMazePuzzleComponent::ActivateConsole(APawn* Player)
+bool UMazePuzzleComponent::IsStandalonePipeTest() const
 {
+    return bAllowStandalonePipeTesting && bUsePipePuzzle && !bUsePressureButtons
+        && !bPrepared && !bArmed && !MazeGenerator.IsValid()
+        && GetWorld() && GetWorld()->IsGameWorld();
+}
+
+bool UMazePuzzleComponent::CanActivateConsole(APawn* Player) const
+{
+    if (bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled()
+        || !GetWorld() || !GetWorld()->IsGameWorld() || Player->GetWorld() != GetWorld())
+    {
+        return false;
+    }
+    if (IsStandalonePipeTest())
+    {
+        return !bPipeSteamChecking && (bLeftPipeActive || bRightPipeActive) && !ArePipeWallsCompleted();
+    }
+    if (!bArmed || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        return false;
+    }
     if (bUsePipePuzzle)
     {
-        if (!bArmed || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled()
-            || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+        return !bUsePressureButtons && !bPipeSteamChecking && (bLeftPipeActive || bRightPipeActive);
+    }
+    return bPuzzleStarted && bButtonsUnlocked && !bPuzzleDoorUnlocked;
+}
+
+bool UMazePuzzleComponent::ActivateConsole(APawn* Player)
+{
+    if (!CanActivateConsole(Player))
+    {
+        return false;
+    }
+    if (bUsePipePuzzle)
+    {
+        // A placed test board runs the same wave without locking or completing a maze room.
+        if (IsStandalonePipeTest())
+        {
+            return CheckPipePuzzle();
+        }
+        // Allow a verified result to retry registration if the generator previously rejected it.
+        if (ArePipeWallsCompleted() && bPipeSteamResultShown && !bPipeCheckUsesPreview)
+        {
+            return CompletePuzzle();
+        }
+        if (!CheckPipePuzzle())
         {
             return false;
         }
-        return CheckPipePuzzle();
-    }
-    if (!bArmed || !bPuzzleStarted || !bButtonsUnlocked || bPuzzleDoorUnlocked || bPuzzleCompleted || !IsValid(Player) || !Player->IsPlayerControlled() || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
-    {
-        return false;
+        // The entry trigger may already have started the room. Otherwise the first valid check does.
+        if (!bPuzzleStarted && !BeginPuzzle(Player))
+        {
+            ResetPipeLights();
+            return false;
+        }
+        return true;
     }
 
     // Readiness stays latched while the player walks from the button to the console.
@@ -580,15 +624,44 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 
 bool UMazePuzzleComponent::CompletePuzzle()
 {
-    if (!bArmed || bPuzzleCompleted || !bButtonsUnlocked || !bPuzzleDoorUnlocked || (bUsePressureButtons && !bPuzzleStarted) || !MazeGenerator.IsValid() || !MazeGenerator->RegisterPuzzleCompleted(Cast<AMazeActors>(GetOwner())))
+    if (!bArmed || bPuzzleCompleted || !MazeGenerator.IsValid())
+    {
+        return false;
+    }
+    if (bUsePipePuzzle)
+    {
+        if (bUsePressureButtons || !bPuzzleStarted || !GetWorld() || !GetWorld()->IsGameWorld()
+            || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || bPipeCheckUsesPreview || bPipeCheckIsStandalone
+            || bPipeSteamChecking || !bPipeSteamResultShown || !ArePipeWallsCompleted())
+        {
+            return false;
+        }
+    }
+    else if (!bButtonsUnlocked || !bPuzzleDoorUnlocked || (bUsePressureButtons && !bPuzzleStarted))
+    {
+        return false;
+    }
+    if (!MazeGenerator->RegisterPuzzleCompleted(Cast<AMazeActors>(GetOwner())))
     {
         return false;
     }
 
     bPuzzleCompleted = true;
+    if (bUsePipePuzzle)
+    {
+        bPuzzleDoorUnlocked = true;
+        bConsoleRed = false;
+        IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
+    }
     UpdateStatusLights();
     SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending);
     QueueCompletedExitCheck();
+    if (bUsePipePuzzle)
+    {
+        OnConsoleStateChanged.Broadcast(false);
+        // Reuse the pressure console's successful unlock and door opening event.
+        OnConsoleActivated.Broadcast();
+    }
     OnPuzzleCompleted.Broadcast();
     return true;
 }
@@ -978,17 +1051,36 @@ bool UMazePuzzleComponent::GeneratePipeLayouts(int32 Seed)
     return bGenerated;
 }
 
-bool UMazePuzzleComponent::RotatePipeCell(bool bRightWall, int32 CellIndex, bool bRotateRight)
+bool UMazePuzzleComponent::CanRotatePipeCell(bool bRightWall, int32 CellIndex) const
 {
     if (!bUsePipePuzzle || bPipeSteamChecking || bPuzzleCompleted || (bRightWall ? bRightPipeCompleted : bLeftPipeCompleted)
         || !(bRightWall ? bRightPipeActive : bLeftPipeActive))
     {
         return false;
     }
+    const FMazePipeLayout& Layout = bRightWall ? RightPipeLayout : LeftPipeLayout;
+    if (!Layout.Cells.IsValidIndex(CellIndex) || Layout.Cells[CellIndex].bLocked
+        || Layout.Cells[CellIndex].Piece == EMazePipePiece::Empty
+        || Layout.Cells[CellIndex].Piece == EMazePipePiece::Inlet || Layout.Cells[CellIndex].Piece == EMazePipePiece::Outlet)
+    {
+        return false;
+    }
+    FMazePipeGridFrame Frame;
+    FString Error;
+    return BuildPipeFrame(bRightWall, Frame, Error) && Layout.Columns == Frame.Columns && Layout.Rows == Frame.Rows
+        && Layout.Cells.Num() == Frame.Columns * Frame.Rows;
+}
+
+bool UMazePuzzleComponent::RotatePipeCell(bool bRightWall, int32 CellIndex, bool bRotateRight)
+{
+    if (!CanRotatePipeCell(bRightWall, CellIndex))
+    {
+        return false;
+    }
     FMazePipeLayout& Layout = bRightWall ? RightPipeLayout : LeftPipeLayout;
     FMazePipeGridFrame Frame;
     FString Error;
-    if (!BuildPipeFrame(bRightWall, Frame, Error) || Layout.Columns != Frame.Columns || Layout.Rows != Frame.Rows)
+    if (!BuildPipeFrame(bRightWall, Frame, Error))
     {
         return false;
     }
@@ -1229,6 +1321,7 @@ bool UMazePuzzleComponent::SpawnPipePiece(bool bRightWall, const FMazePipeGridFr
     Actor->GridCellIndex = CellIndex;
     Actor->bRightWall = bRightWall;
     Actor->ConfigureIndicators(Cell, Frame);
+    Actor->InitializeInteraction(this, !bPreview);
     USceneComponent* Parent = GetPipeWallParent(bRightWall);
     if (IsValid(Parent))
     {
@@ -1604,6 +1697,7 @@ bool UMazePuzzleComponent::CheckPipePuzzle()
         return false;
     }
     bPipeCheckUsesPreview = bPreview;
+    bPipeCheckIsStandalone = IsStandalonePipeTest();
     bPipeSteamChecking = true;
     bPipeSteamResultShown = false;
     PipeSteamStep = 0;
@@ -1618,6 +1712,7 @@ void UMazePuzzleComponent::ResetPipeLights()
 {
     bPipeSteamChecking = false;
     bPipeSteamResultShown = false;
+    bPipeCheckIsStandalone = false;
     PipeSteamElapsed = 0.0f;
     PipeSteamHoldRemaining = 0.0f;
     const auto ResetActors = [this](const TArray<TObjectPtr<AMazePipePiece>>& Actors)
@@ -1684,6 +1779,12 @@ void UMazePuzzleComponent::ApplyPipeSteamStep()
     }
 }
 
+bool UMazePuzzleComponent::ArePipeWallsCompleted() const
+{
+    return bUsePipePuzzle && (bLeftPipeActive || bRightPipeActive)
+        && (!bLeftPipeActive || bLeftPipeCompleted) && (!bRightPipeActive || bRightPipeCompleted);
+}
+
 void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
 {
     if (!bPipeSteamChecking || !FMath::IsFinite(DeltaTime) || DeltaTime < 0.0f)
@@ -1716,7 +1817,7 @@ void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
     if (PipeSteamStep == LastPipeSteamStep)
     {
         bPipeSteamResultShown = true;
-        const bool bPassed = (!bLeftPipeActive || bLeftPipeCompleted) && (!bRightPipeActive || bRightPipeCompleted);
+        const bool bPassed = ArePipeWallsCompleted();
         PipeSteamHoldRemaining = !bPassed && FMath::IsFinite(PipeSteamHoldSeconds) ? FMath::Clamp(PipeSteamHoldSeconds, 0.0f, 30.0f) : 0.0f;
         if (bPassed)
         {
@@ -1728,8 +1829,16 @@ void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
         {
             UE_LOG(LogTemp, Display, TEXT("Pipe light preview: %s. No gameplay failure or completion events were sent."), bPassed ? TEXT("Passed") : TEXT("Failed"));
         }
+        else if (bPipeCheckIsStandalone)
+        {
+            UE_LOG(LogTemp, Display, TEXT("Pipe standalone test: %s. No maze completion or door events were sent."), bPassed ? TEXT("Passed") : TEXT("Failed"));
+        }
         else
         {
+            if (bPassed && !CompletePuzzle() && !bPuzzleCompleted)
+            {
+                UE_LOG(LogTemp, Error, TEXT("Pipe puzzle: Steam passed but room completion could not be registered. Start the check through the console in a prepared maze room."));
+            }
             OnPipeSteamCheckFinished.Broadcast(bPassed);
         }
     }

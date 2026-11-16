@@ -52,6 +52,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
     bool bUsePipePuzzle = false;
 
+    // Test a placed board without a generator. This never completes a maze room or opens its door.
+    UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Puzzle|Pipes|Testing")
+    bool bAllowStandalonePipeTesting = false;
+
     // Square cell size and fitted columns are calculated from the arrow rectangle.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
     FMazePipeGridSettings PipeGridSettings;
@@ -230,15 +234,18 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Puzzle|Events")
     FOnRoomPuzzleCompleted OnPuzzleCompleted;
 
-    // Call after the player has fully entered the pressure-button room.
+    // Call after the player has fully entered a pressure button or pipe room.
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool BeginPuzzle(APawn* Player);
+
+    UFUNCTION(BlueprintPure, Category = "Puzzle")
+    bool CanActivateConsole(APawn* Player) const;
 
     // Call from the console's existing player interaction event.
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool ActivateConsole(APawn* Player);
 
-    // The actual puzzle's success logic unlocks the separate maze end door.
+    // Record actual success. Pipe checks also unlock the room door and notify its opening graph.
     UFUNCTION(BlueprintCallable, Category = "Puzzle")
     bool CompletePuzzle();
 
@@ -246,11 +253,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
     bool GeneratePipeLayouts(int32 Seed);
 
-    // Later the existing E and F interaction events will call this function.
+    UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes")
+    bool CanRotatePipeCell(bool bRightWall, int32 CellIndex) const;
+
+    // Called by the pipe Actor through the player's existing interaction actions.
     UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
     bool RotatePipeCell(bool bRightWall, int32 CellIndex, bool bRotateRight);
 
-    // Returns data only. Tally lights, audio and completion are connected in the next stage.
+    // Returns data only. The console's animated check handles pipe room completion.
     UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes")
     FMazePipeSteamResult TracePipeWall(bool bRightWall) const;
 
@@ -325,6 +335,8 @@ private:
     void ClearRuntimePipeMeshes();
     void AdvancePipeSteamCheck(float DeltaTime);
     void ApplyPipeSteamStep();
+    bool ArePipeWallsCompleted() const;
+    bool IsStandalonePipeTest() const;
 
     UPROPERTY(Transient, DuplicateTransient)
     TObjectPtr<ULineBatchComponent> PipePreviewLines;
@@ -337,6 +349,7 @@ private:
     bool bHasPipeLayoutPreview = false;
     bool bPipePreviewShowsSolution = false;
     bool bPipeCheckUsesPreview = false;
+    bool bPipeCheckIsStandalone = false;
     bool bPipeSteamResultShown = false;
     int32 PipeSteamStep = 0;
     int32 LastPipeSteamStep = 0;

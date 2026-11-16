@@ -5,13 +5,17 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Enviornment/MazePipeFitting.h"
+#include "Utility/Interactable.h"
 #include "MazePipePiece.generated.h"
 
 class UArrowComponent;
+class UBoxComponent;
+class UMazePuzzleComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UPointLightComponent;
 class USceneComponent;
+class USphereComponent;
 class UStaticMeshComponent;
 class UTextRenderComponent;
 
@@ -35,18 +39,29 @@ struct AM_2610_API FMazePipeSurfaceMaterials
 
 // Create pipe mesh Blueprints from this Actor. Keep MazePipePuzzle as a plain helper.
 UCLASS(Blueprintable)
-class AM_2610_API AMazePipePiece : public AActor
+class AM_2610_API AMazePipePiece : public AActor, public IInteractable
 {
     GENERATED_BODY()
 
 public:
     AMazePipePiece();
 
+    virtual bool CanInteract_Implementation(AActor* Interactor) override;
+    virtual FInteractPrompt GetInteractPrompt_Implementation(AActor* Interactor) override;
+    virtual void Interact_Implementation(AActor* Interactor) override;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe")
     TObjectPtr<USceneComponent> SceneRoot;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe")
     TObjectPtr<UStaticMeshComponent> PipeMesh;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe|Interaction")
+    TObjectPtr<UBoxComponent> InteractionBox;
+
+    // Register with the player's existing interaction sphere. The camera trace still selects the cell.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe|Interaction")
+    TObjectPtr<USphereComponent> InteractionRange;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe|Connectors")
     TObjectPtr<UArrowComponent> PortUp;
@@ -164,6 +179,16 @@ public:
     bool FitToCell(const FMazePipeCell& Cell, float CellSize, float TargetDiameter, float WallReach,
         const AMazePipePiece* StraightSource, FString& OutError);
     void ConfigureIndicators(const FMazePipeCell& Cell, const FMazePipeGridFrame& Frame);
+    void InitializeInteraction(UMazePuzzleComponent* Puzzle, bool bEnableInteraction);
+
+    UFUNCTION(BlueprintPure, Category = "Pipe|Interaction")
+    bool IsRuntimePipe() const;
+
+    UFUNCTION(BlueprintPure, Category = "Pipe|Interaction")
+    bool CanRotatePipe() const;
+
+    UFUNCTION(BlueprintCallable, Category = "Pipe|Interaction")
+    bool RotatePipe(bool bRotateRight);
 
 protected:
     virtual void BeginPlay() override;
@@ -205,4 +230,6 @@ private:
     EMazePipePiece FittedPiece = EMazePipePiece::Empty;
     FVector FittedIndicatorCenter = FVector::ZeroVector;
     float FittedPipeDiameter = 0.0f;
+    TWeakObjectPtr<UMazePuzzleComponent> PuzzleComponent;
+    bool bInteractionEnabled = false;
 };

@@ -1,12 +1,18 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Enviornment/MazePipePiece.h"
+#include "Enviornment/MazePipeInteractionComponent.h"
+#include "Enviornment/MazePuzzleComponent.h"
 #include "Components/ArrowComponent.h"
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "Math/RotationMatrix.h"
@@ -26,6 +32,32 @@ AMazePipePiece::AMazePipePiece()
     PipeMesh->SetMobility(EComponentMobility::Movable);
     PipeMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     PipeMesh->SetCanEverAffectNavigation(false);
+
+    InteractionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("InteractionBox"));
+    InteractionBox->SetupAttachment(SceneRoot);
+    InteractionBox->SetMobility(EComponentMobility::Movable);
+    InteractionBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    InteractionBox->SetCollisionObjectType(ECC_WorldDynamic);
+    InteractionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+    InteractionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+    InteractionBox->SetGenerateOverlapEvents(false);
+    InteractionBox->SetCanEverAffectNavigation(false);
+    InteractionBox->SetHiddenInGame(true);
+    InteractionBox->SetVisibility(false);
+
+    InteractionRange = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionRange"));
+    InteractionRange->SetupAttachment(SceneRoot);
+    InteractionRange->SetMobility(EComponentMobility::Movable);
+    // Cover the adapter's maximum trace range without changing the working Visibility box.
+    InteractionRange->InitSphereRadius(1000.0f);
+    InteractionRange->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    InteractionRange->SetCollisionObjectType(ECC_GameTraceChannel1);
+    InteractionRange->SetCollisionResponseToAllChannels(ECR_Ignore);
+    InteractionRange->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+    InteractionRange->SetGenerateOverlapEvents(false);
+    InteractionRange->SetCanEverAffectNavigation(false);
+    InteractionRange->SetHiddenInGame(true);
+    InteractionRange->SetVisibility(false);
 
     FlowIndicator = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FlowIndicator"));
     RequiredIndicator = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RequiredIndicator"));
@@ -345,6 +377,8 @@ void AMazePipePiece::ConfigureIndicators(const FMazePipeCell& Cell, const FMazeP
     const float IndicatorDiameter = FMath::Max(1.0f, FittedPipeDiameter);
     const FVector Facing = GetActorTransform().InverseTransformVectorNoScale(Frame.Inward).GetSafeNormal();
     const FVector Up = GetActorTransform().InverseTransformVectorNoScale(Frame.Up).GetSafeNormal();
+    InteractionBox->SetRelativeTransform(FTransform(FRotationMatrix::MakeFromXZ(Facing, Up).ToQuat()));
+    InteractionBox->SetBoxExtent(FVector(IndicatorDiameter * 1.5f, Frame.CellSize * 0.49f, Frame.CellSize * 0.49f));
     FVector Mount = FittedIndicatorCenter;
     const bool bWallConnection = Cell.Piece == EMazePipePiece::Inlet || Cell.Piece == EMazePipePiece::Outlet;
     if (bWallConnection)
@@ -402,6 +436,63 @@ void AMazePipePiece::ConfigureIndicators(const FMazePipeCell& Cell, const FMazeP
     RequiredIndicatorMaterial = bRequiredChamber ? RequiredIndicator->CreateDynamicMaterialInstance(0, IndicatorMaterial.Get()) : nullptr;
     CachePipeSurfaceMaterials();
     SetIndicatorStates(EMazePipeFlowLightState::Idle, EMazePipeChamberLightState::Required);
+}
+
+void AMazePipePiece::InitializeInteraction(UMazePuzzleComponent* Puzzle, bool bEnableInteraction)
+{
+    PuzzleComponent = Puzzle;
+    bInteractionEnabled = bEnableInteraction && IsValid(Puzzle) && GetWorld() && GetWorld()->IsGameWorld();
+    SetActorEnableCollision(bInteractionEnabled);
+    InteractionBox->SetCollisionEnabled(bInteractionEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+    InteractionRange->SetGenerateOverlapEvents(bInteractionEnabled);
+    InteractionRange->SetCollisionEnabled(bInteractionEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+}
+
+bool AMazePipePiece::CanInteract_Implementation(AActor* Interactor)
+{
+    const APawn* Player = Cast<APawn>(Interactor);
+    const UMazePipeInteractionComponent* Interaction = IsValid(Player)
+        ? Player->FindComponentByClass<UMazePipeInteractionComponent>() : nullptr;
+    return IsValid(Player) && Player->IsLocallyControlled() && Player->InputEnabled()
+        && IsValid(Interaction) && Interaction->IsActive() && Interaction->bInputReady
+        && Interaction->FocusedPipe == this && Interaction->bCanRotateFocusedPipe && CanRotatePipe();
+}
+
+FInteractPrompt AMazePipePiece::GetInteractPrompt_Implementation(AActor* Interactor)
+{
+    FInteractPrompt Prompt;
+    if (CanInteract_Implementation(Interactor))
+    {
+        const UMazePipeInteractionComponent* Interaction = Interactor->FindComponentByClass<UMazePipeInteractionComponent>();
+        Prompt.Target = this;
+        Prompt.Slot = EInteractSlot::Primary;
+        Prompt.Verb = Interaction->GetRotationPromptVerb();
+    }
+    return Prompt;
+}
+
+void AMazePipePiece::Interact_Implementation(AActor* Interactor)
+{
+    if (CanInteract_Implementation(Interactor))
+    {
+        RotatePipe(false);
+    }
+}
+
+bool AMazePipePiece::IsRuntimePipe() const
+{
+    return bInteractionEnabled && bFitted && !IsActorBeingDestroyed() && GetWorld() && GetWorld()->IsGameWorld()
+        && PuzzleComponent.IsValid() && PuzzleComponent->GetOwner() == GetOwner();
+}
+
+bool AMazePipePiece::CanRotatePipe() const
+{
+    return IsRuntimePipe() && PuzzleComponent->CanRotatePipeCell(bRightWall, GridCellIndex);
+}
+
+bool AMazePipePiece::RotatePipe(bool bRotateRight)
+{
+    return IsRuntimePipe() && PuzzleComponent->RotatePipeCell(bRightWall, GridCellIndex, bRotateRight);
 }
 
 void AMazePipePiece::CachePipeSurfaceMaterials()
