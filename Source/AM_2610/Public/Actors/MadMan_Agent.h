@@ -17,11 +17,14 @@ class AM_2610_API AMadMan_Agent : public AAgent
 public:
 	AMadMan_Agent();
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	AActor* IntroSpline;
+
 protected:
 	virtual void BeginPlay() override;
 
 	class AWrittingBoard* WrittingBoard;
 
 private:
-
+	int32 SplinePointIndex = 0;
 };
