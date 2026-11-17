@@ -33,7 +33,7 @@ protected:
 
 private:
 	FRotator TargetInPlaceRotation;
-	float InPlaceTurnSpeed = 4.0f;
+	float InPlaceTurnSpeed = 2.0f;
 
 	UFUNCTION()
 	void IntroduceGame();

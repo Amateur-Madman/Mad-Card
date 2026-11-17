@@ -128,9 +128,12 @@ void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bo
 		PlaybackSettings, 
 		SequenceActor);
 
-	if(SequencePlayer && BindSequence)
+	if(SequencePlayer)
 	{
-		SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
+		if (BindSequence)
+		{
+			SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
+		}
 		SequencePlayer->Play();
 	}
 }
