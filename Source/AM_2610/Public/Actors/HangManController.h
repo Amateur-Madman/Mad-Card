@@ -7,7 +7,7 @@
 #include "HangManController.generated.h"
 
 /**
- * 
+ * HangMan. Inherits from the Weeping Angel controller, which inherits from ABaseEnemyController.
  */
 UCLASS()
 class AM_2610_API AHangManController : public AWeepingAngelController
