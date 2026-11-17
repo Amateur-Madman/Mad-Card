@@ -8,10 +8,6 @@
 #include "NavMesh/NavMeshPath.h"
 #include "Actors/MadMan_Agent.h"
 
-AMadManController::AMadManController()
-{
-}
-
 void AMadManController::FollowSpline(USplineComponent* SplineToFollow, bool bShouldLoop)
 {
 	if (!SplineToFollow || !GetPawn() || !GetPathFollowingComponent())

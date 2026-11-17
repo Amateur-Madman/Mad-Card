@@ -26,7 +26,7 @@ void ABossLevelScript::BeginPlay()
 	{
 		WrittingBoard->OnRight.AddDynamic(this, &ABossLevelScript::OnCorrectInput);	
 		WrittingBoard->OnWrong.AddDynamic(this, &ABossLevelScript::OnIncorrectInput);
-		WrittingBoard->OnCanProcess.AddDynamic(this, &ABossLevelScript::EndSequenceNow);
+		//WrittingBoard->OnCanProcess.AddDynamic(this, &ABossLevelScript::EndSequenceNow);
 	}
 
 	if(MadMan)
@@ -44,36 +44,37 @@ void ABossLevelScript::BeginPlay()
 void ABossLevelScript::OnCorrectInput()
 {
 	int32 RandIndex = 0;
+	WrittingBoard->PlayerReady = false;
+
 	if(RightSequences.Num() > 0)
 	{
 		RandIndex = FMath::RandRange(0, RightSequences.Num() - 1);
-		PlayNextSequence(RightSequences[RandIndex]);
+		PlayNextSequence(RightSequences[RandIndex], true);
 	}
 }
 
 void ABossLevelScript::OnIncorrectInput()
 {
 	int32 RandIndex = 0;
-	if(WrittingBoard)
-	{
-		int32 Count = WrittingBoard->MainTextWidget->WrongGuessCount;
-		int32 Limit = WrittingBoard->MainTextWidget->WrongGuessLimit;
-		int32 Remaining = Limit - Count;
-		if (Remaining <= 3)
-		{
-			if (Remaining == 3)
-			{
+	WrittingBoard->PlayerReady = false;
+	int32 Count = WrittingBoard->MainTextWidget->WrongGuessCount;
+	int32 Limit = WrittingBoard->MainTextWidget->WrongGuessLimit;
+	int32 Remaining = Limit - Count;
 
-			}
-			Last3WrongInputs();
-		}
-		else
+	if (Remaining <= 2)
+	{
+		if (Remaining == 2)
 		{
-			if(WrongSequences.Num() > 0)
-			{
-				RandIndex = FMath::RandRange(0, WrongSequences.Num() - 1);
-				PlayNextSequence(WrongSequences[RandIndex]);
-			}
+
+		}
+		Last3WrongInputs();
+	}
+	else
+	{
+		if (WrongSequences.Num() > 0)
+		{
+			RandIndex = FMath::RandRange(0, WrongSequences.Num() - 1);
+			PlayNextSequence(WrongSequences[RandIndex], true);
 		}
 	}
 }
@@ -128,9 +129,12 @@ void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bo
 		PlaybackSettings, 
 		SequenceActor);
 
-	if(SequencePlayer && BindSequence)
+	if(SequencePlayer)
 	{
-		SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
+		if (BindSequence)
+		{
+			SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
+		}
 		SequencePlayer->Play();
 	}
 }

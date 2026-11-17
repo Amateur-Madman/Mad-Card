@@ -15,8 +15,6 @@ class AM_2610_API AMadManController : public AAIController
 	GENERATED_BODY()
 	
 public:
-	AMadManController();
-
 	// Call this to start following a spline component
 	UFUNCTION(BlueprintCallable, Category = "AI|Spline")
 	void FollowSpline(class USplineComponent* SplineToFollow, bool bShouldLoop = true);
