@@ -36,7 +36,7 @@ public:
 	int32 EasyWrongGuessLimit = 7;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	int32 HardWrongGuessLimit = 4;
+	int32 HardWrongGuessLimit = 5;
 
 	bool CheckInput(TCHAR LetterTyped);
 
