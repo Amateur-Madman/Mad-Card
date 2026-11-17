@@ -6,10 +6,13 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "AITargetStack.generated.h"
 
+// Fired whenever the top of the stack changes (NewTarget is nullptr if the stack became empty)
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnAITargetChanged, AActor* /*NewTarget*/);
+
 /**
  * "Who should enemies chase right now?" The most recently pushed target wins. The player pushes
- * itself at BeginPlay; a Decoy pushes itself on top and removes itself when it expires, so the
- * enemy's AIController just asks GetCurrentTarget().
+ * itself at BeginPlay; a Decoy pushes itself on top and removes itself when it expires. Enemy
+ * controllers subscribe to OnTargetChanged and update their Blackboard when the top changes.
  */
 UCLASS()
 class AM_2610_API UAITargetStack : public UWorldSubsystem
@@ -28,7 +31,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI")
 	AActor* GetCurrentTarget();
 
+	// Controllers bind here instead of polling
+	FOnAITargetChanged OnTargetChanged;
+
 private:
+	// Removes without broadcasting, so Push/Remove can compare old top vs new top themselves
+	void RemoveInternal(AActor* Target);
+
 	// Weak pointers so a destroyed decoy can never dangle
 	TArray<TWeakObjectPtr<AActor>> Stack;
 };

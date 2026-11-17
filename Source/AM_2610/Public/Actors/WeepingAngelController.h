@@ -3,20 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AIController.h"
+#include "Actors/BaseEnemyController.h"
 #include "WeepingAngelController.generated.h"
 
 /**
- * 
+ * Weeping Angel. BTAsset, PlayerKey, Behavior Tree startup and target-stack syncing all come
+ * from ABaseEnemyController.
  */
 UCLASS()
-class AM_2610_API AWeepingAngelController : public AAIController
+class AM_2610_API AWeepingAngelController : public ABaseEnemyController
 {
 	GENERATED_BODY()
-protected:
-	virtual void OnPossess(APawn* InPawn) override;
-
-public:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Behavior Tree")
-	class UBehaviorTree* BTAsset;
 };
