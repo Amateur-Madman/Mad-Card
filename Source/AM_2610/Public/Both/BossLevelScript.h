@@ -15,22 +15,31 @@ class AM_2610_API ABossLevelScript : public ALevelScriptActor
 	GENERATED_BODY()
 	
 public:
-	TObjectPtr<class ABasePlayer> Player;
+	class ABasePlayer* Player;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TObjectPtr<class AMadMan_Agent> MadMan;
+	class AMadMan_Agent* MadMan;
 
 	void RegisterBoard(TObjectPtr<class AWrittingBoard> Board);
 	void RegisterChair(TObjectPtr<class AChairForHangman> Chair);
 
 	UFUNCTION(BlueprintCallable, Category = "Sequencer")
-	void EnqueueSequence(class ULevelSequence* SequenceToAdd);
+	void PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindSequence = false);
 
-	UFUNCTION(BlueprintCallable, Category = "Sequencer")
-	void PlayNextSequence();
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TArray<class ULevelSequence*> WrongSequences;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sequencer")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TArray<class ULevelSequence*> RightSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	class ULevelSequence* IntroSequence;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	class ULevelSequence* Last3Sequence;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	class ULevelSequence* PresentHangmanSequence;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TObjectPtr<class AWrittingBoard> WrittingBoard;
@@ -49,9 +58,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TArray<TObjectPtr<class AActor>> FloorSections;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
-	TArray<TObjectPtr<class APointLight>> Lights;
-
 private:
 	//Input tracking/ reaction
 	UFUNCTION()
@@ -64,12 +70,7 @@ private:
 
 	void TryLinkActors();
 
-	//Sequence handling
-	bool IsSequencePlaying = false;
-
-	UPROPERTY()
-	TArray<class ULevelSequence*> SequenceQueue;
-
+	//Sequence Handling
 	UPROPERTY()
 	class ULevelSequencePlayer* SequencePlayer;
 
@@ -77,8 +78,18 @@ private:
 	class ALevelSequenceActor* SequenceActor;
 
 	UFUNCTION()
-	void OnIntroSequenceFinished();
+	void OnSequenceFinished();
 
-	//UFUNCTION()
-	//void OnSequenceFinished();
+	UFUNCTION()
+	void PresentHangman();
+
+	UFUNCTION()
+	void EndSequenceNow();
+
+	//Boss Handling
+	UFUNCTION()
+	void EditBossFocus(AActor* Target);
+
+	UFUNCTION()
+	void BossFocusPlayer();
 };

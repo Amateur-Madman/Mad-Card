@@ -2,50 +2,61 @@
 
 
 #include "Actors/ChaserController.h"
-#include <Perception/AIPerceptionComponent.h>
 #include "BehaviorTree/BlackboardComponent.h"
-#include <Perception/AISenseConfig_Sight.h>
-#include "Actors/BasePlayer.h"
-
-void AChaserController::OnPossess(APawn* InPawn)
-{
-	Super::OnPossess(InPawn);
-	if (BTAsset)
-	{
-		RunBehaviorTree(BTAsset);
-	}
-}
+#include "Perception/AISenseConfig_Sight.h"
+#include "Utility/AITargetStack.h"
 
 AChaserController::AChaserController()
 {
-	NativePerception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("AIPeception"));
-	if (NativePerception)
-	{
-		UAISenseConfig_Sight* SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-		SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-		SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
-		SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
-		SightConfig->SightRadius = 1500.0f;
-		SightConfig->LoseSightRadius = 3000.0f;
-		SightConfig->PeripheralVisionAngleDegrees = 45.0f;
-		SightConfig->AutoSuccessRangeFromLastSeenLocation = 200.0f;
-		NativePerception->ConfigureSense(*SightConfig);
-	
-		NativePerception->OnTargetPerceptionUpdated.AddDynamic(this, &AChaserController::HandlePerception);
-	}
+	// NOTE: reconstructed from the header. If your original constructor had different sight
+	// numbers or extra senses, keep yours and only keep the OnTargetPerceptionUpdated binding.
+	NativePerception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("NativePerception"));
+	SetPerceptionComponent(*NativePerception);
 
-	PlayerKey = TEXT("Player");
+	UAISenseConfig_Sight* SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+	SightConfig->SightRadius = 2000.f;
+	SightConfig->LoseSightRadius = 2200.f;
+	SightConfig->PeripheralVisionAngleDegrees = 90.f;
+	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
+	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+
+	NativePerception->ConfigureSense(*SightConfig);
+	NativePerception->SetDominantSense(SightConfig->GetSenseImplementation());
+	NativePerception->OnTargetPerceptionUpdated.AddDynamic(this, &AChaserController::HandlePerception);
+}
+
+void AChaserController::HandleTargetChanged(AActor* NewTarget)
+{
+	UBlackboardComponent* BB = GetBlackboardComponent();
+
+	// Not hunting yet: leave it alone and let perception start the chase.
+	// Already hunting: swap the target (decoy on / decoy expired) and restart the move.
+	if (BB && BB->GetValueAsObject(PlayerKey))
+	{
+		Super::HandleTargetChanged(NewTarget);
+	}
 }
 
 void AChaserController::HandlePerception(AActor* Actor, FAIStimulus Stimulus)
 {
+	UBlackboardComponent* BB = GetBlackboardComponent();
+	UWorld* World = GetWorld();
+	UAITargetStack* Stack = World ? World->GetSubsystem<UAITargetStack>() : nullptr;
+	if (!BB || !Stack)
+	{
+		return;
+	}
+
 	if (Stimulus.WasSuccessfullySensed())
 	{
-		if(ABasePlayer* Player = Cast<ABasePlayer>(Actor))
-		GetBlackboardComponent()->SetValueAsObject(PlayerKey, Actor);
+		// Chase whatever the stack says, not necessarily the actor that was just seen
+		BB->SetValueAsObject(PlayerKey, Stack->GetCurrentTarget());
 	}
-	else
+	else if (Actor == Stack->GetCurrentTarget())
 	{
-		GetBlackboardComponent()->ClearValue(PlayerKey);
+		// Lost sight of the thing we were chasing
+		BB->ClearValue(PlayerKey);
 	}
+	// else: lost sight of the player while a decoy is on top, so keep chasing the decoy
 }

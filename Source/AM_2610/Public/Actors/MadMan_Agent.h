@@ -6,6 +6,8 @@
 #include "Actors/Agent.h"
 #include "MadMan_Agent.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLocation);
+
 /**
  * 
  */
@@ -17,11 +19,22 @@ class AM_2610_API AMadMan_Agent : public AAgent
 public:
 	AMadMan_Agent();
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	AActor* IntroSpline;
+
+	FOnLocation OnIntroSpot;
+
+	void SetFoucsForRotation(AActor* Target);
+
 protected:
 	virtual void BeginPlay() override;
 
 	class AWrittingBoard* WrittingBoard;
 
 private:
+	FRotator TargetInPlaceRotation;
+	float InPlaceTurnSpeed = 4.0f;
 
+	UFUNCTION()
+	void IntroduceGame();
 };

@@ -139,6 +139,7 @@ void AWrittingBoard::SendKeyboardInput(const TCHAR& InKey)
 void AWrittingBoard::AllowInputProcessing()
 {
 	CanProcessInput = true;
+	OnCanProcess.Broadcast();
 }
 
 bool FBoardInputInterceptor::HandleKeyDownEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent)

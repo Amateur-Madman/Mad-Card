@@ -7,6 +7,9 @@
 #include "Actors/BaseGameMode.h"
 #include "Actors/BasePlayer.h"
 #include "Actors/BasePlayerController.h"
+#include "Actors/MadMan_Agent.h"
+#include "Actors/MadManController.h"
+#include "Both/MadManAnimation.h"
 #include "GameFramework/GameStateBase.h"
 #include "Both/SentenceWordUnderlined.h"
 #include "LevelSequence.h"
@@ -16,15 +19,23 @@
 void ABossLevelScript::BeginPlay()
 {
 	Super::BeginPlay();
+
+	PlayNextSequence(IntroSequence);
+
 	if (ChairForHangman && WrittingBoard)
 	{
 		WrittingBoard->OnRight.AddDynamic(this, &ABossLevelScript::OnCorrectInput);	
 		WrittingBoard->OnWrong.AddDynamic(this, &ABossLevelScript::OnIncorrectInput);
+		WrittingBoard->OnCanProcess.AddDynamic(this, &ABossLevelScript::EndSequenceNow);
+	}
 
-		if (IntroSequence)
+	if(MadMan)
+	{
+		Player = Cast<ABasePlayer>(GetWorld()->GetFirstPlayerController()->GetPawn());
+		MadMan->OnIntroSpot.AddDynamic(this, &ABossLevelScript::BossFocusPlayer);
+		if (UMadManAnimation* AnimInstance = Cast<UMadManAnimation>(MadMan->GetMesh()->GetAnimInstance()))
 		{
-			SequenceQueue.Add(IntroSequence);
-			PlayNextSequence();
+			AnimInstance->OnPointOver.AddDynamic(this, &ABossLevelScript::PresentHangman);
 		}
 	}
 }
@@ -32,27 +43,50 @@ void ABossLevelScript::BeginPlay()
 
 void ABossLevelScript::OnCorrectInput()
 {
+	int32 RandIndex = 0;
+	if(RightSequences.Num() > 0)
+	{
+		RandIndex = FMath::RandRange(0, RightSequences.Num() - 1);
+		PlayNextSequence(RightSequences[RandIndex]);
+	}
 }
 
 void ABossLevelScript::OnIncorrectInput()
 {
+	int32 RandIndex = 0;
 	if(WrittingBoard)
 	{
 		int32 Count = WrittingBoard->MainTextWidget->WrongGuessCount;
 		int32 Limit = WrittingBoard->MainTextWidget->WrongGuessLimit;
-		if (Limit - Count <= 3)
+		int32 Remaining = Limit - Count;
+		if (Remaining <= 3)
 		{
+			if (Remaining == 3)
+			{
+
+			}
 			Last3WrongInputs();
 		}
 		else
 		{
-
+			if(WrongSequences.Num() > 0)
+			{
+				RandIndex = FMath::RandRange(0, WrongSequences.Num() - 1);
+				PlayNextSequence(WrongSequences[RandIndex]);
+			}
 		}
 	}
 }
 
 void ABossLevelScript::Last3WrongInputs()
 {
+	if (WrongSequences.Num() > 0)
+	{
+		for (int32 i = 0; i < WrongSequences.Num(); i++)
+		{
+
+		}
+	}
 }
 
 void ABossLevelScript::TryLinkActors()
@@ -77,13 +111,8 @@ void ABossLevelScript::RegisterChair(TObjectPtr<AChairForHangman> Chair)
 }
 
 // Sequence handling
-void ABossLevelScript::PlayNextSequence()
+void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindSequence)
 {
-	if(SequenceQueue.Num() == 0)
-	{
-		return;
-	}
-
 	FMovieSceneSequencePlaybackSettings PlaybackSettings;
 	PlaybackSettings.bPauseAtEnd = true; // Keeps actors at their final positions
 
@@ -95,24 +124,42 @@ void ABossLevelScript::PlayNextSequence()
 
 	SequencePlayer = ULevelSequencePlayer::CreateLevelSequencePlayer(
 		GetWorld(), 
-		SequenceQueue[0], 
+		SequenceToPlay, 
 		PlaybackSettings, 
 		SequenceActor);
 
-	if(SequencePlayer)
+	if(SequencePlayer && BindSequence)
 	{
-		SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnIntroSequenceFinished);
-		IsSequencePlaying = true;
+		SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
 		SequencePlayer->Play();
 	}
 }
 
-void ABossLevelScript::EnqueueSequence(ULevelSequence* SequenceToAdd)
+void ABossLevelScript::OnSequenceFinished()
 {
+	BossFocusPlayer();
 }
 
-void ABossLevelScript::OnIntroSequenceFinished()
+void ABossLevelScript::PresentHangman()
 {
-	UE_LOG(LogTemp, Log, TEXT("Intro sequence finished."));
-	IsSequencePlaying = false;
+	EditBossFocus(WrittingBoard);
+	PlayNextSequence(PresentHangmanSequence, true);
+}
+
+void ABossLevelScript::EndSequenceNow()
+{
+	if (SequencePlayer && SequencePlayer->IsPlaying())
+	{
+		SequencePlayer->Stop();
+	}
+}
+
+void ABossLevelScript::EditBossFocus(AActor* Target)
+{
+	MadMan->SetFoucsForRotation(Target);
+}
+
+void ABossLevelScript::BossFocusPlayer()
+{
+	EditBossFocus(Player);
 }

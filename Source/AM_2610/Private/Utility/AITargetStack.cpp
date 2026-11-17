@@ -10,16 +10,28 @@ void UAITargetStack::Push(AActor* Target)
 		return;
 	}
 
-	Remove(Target);
+	AActor* OldTop = GetCurrentTarget();
+
+	RemoveInternal(Target);
 	Stack.Add(Target);
+
+	if (OldTop != Target)
+	{
+		OnTargetChanged.Broadcast(Target);
+	}
 }
 
 void UAITargetStack::Remove(AActor* Target)
 {
-	Stack.RemoveAll([Target](const TWeakObjectPtr<AActor>& Entry)
+	AActor* OldTop = GetCurrentTarget();
+
+	RemoveInternal(Target);
+
+	AActor* NewTop = GetCurrentTarget();
+	if (OldTop != NewTop)
 	{
-		return !Entry.IsValid() || Entry.Get() == Target;
-	});
+		OnTargetChanged.Broadcast(NewTop);
+	}
 }
 
 AActor* UAITargetStack::GetCurrentTarget()
@@ -34,4 +46,12 @@ AActor* UAITargetStack::GetCurrentTarget()
 		Stack.Pop();
 	}
 	return nullptr;
+}
+
+void UAITargetStack::RemoveInternal(AActor* Target)
+{
+	Stack.RemoveAll([Target](const TWeakObjectPtr<AActor>& Entry)
+	{
+		return !Entry.IsValid() || Entry.Get() == Target;
+	});
 }

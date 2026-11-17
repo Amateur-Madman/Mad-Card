@@ -3,11 +3,4 @@
 
 #include "Actors/WeepingAngelController.h"
 
-void AWeepingAngelController::OnPossess(APawn* InPawn)
-{
-	Super::OnPossess(InPawn);
-	if (BTAsset)
-	{
-		RunBehaviorTree(BTAsset);
-	}
-}
+// Behavior Tree startup and target-stack syncing live in ABaseEnemyController.

@@ -44,6 +44,7 @@ public:
 	FOnInput OnWrong;
 
 	bool CanProcessInput = true;
+	FOnInput OnCanProcess;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	bool PlayerReady = false;
