@@ -43,15 +43,15 @@ public:
 	FOnResult OnCompleted;
 	FOnResult OnFailed;
 
+	int32 WrongGuessCount = 0;
+	int32 WrongGuessLimit = 0;
+
 private:
 	void Setup(const FString& bWordOrPhrase);
 	void AddToLetters(TArray<struct FMadLetter> bMadLetters);
 	bool CheckIfAllLettersRevealed();
 
 	TArray<struct FMadLetter> AllLetters;
-
-	int32 WrongGuessCount = 0;
-	int32 WrongGuessLimit = 0;
 
 	bool ValidInput = false;
 

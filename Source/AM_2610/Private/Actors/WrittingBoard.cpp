@@ -2,17 +2,12 @@
 
 
 #include "Actors/WrittingBoard.h"
-#include "Actors/BaseGameMode.h"
-#include "Actors/BasePlayer.h"
-#include "Actors/BasePlayerController.h"
+#include "Both/BossLevelScript.h"
 #include "Actors/ChairForHangman.h"
 #include "Both/SentenceWordUnderlined.h"
 #include "Components/WidgetComponent.h"
 #include "Components/BoxComponent.h"
-#include "EnhancedInputComponent.h"
-#include "EnhancedInputSubsystems.h"
-#include "EngineUtils.h" 
-#include "GameFramework/GameStateBase.h"
+#include "Actors/BaseGameMode.h"
 
 // Sets default values
 AWrittingBoard::AWrittingBoard()
@@ -50,15 +45,9 @@ void AWrittingBoard::BeginPlay()
 
 	if (UWorld* World = GetWorld())
 	{
-		if (AGameStateBase* GameState = World->GetGameState())
+		if (ABossLevelScript* LevelScript = Cast<ABossLevelScript>(World->GetLevelScriptActor()))
 		{
-			if (ABasePlayerController* PC = Cast<ABasePlayerController>(GameState->GetGameInstance()->GetFirstLocalPlayerController(World)))
-			{
-				if (ABasePlayer* MyChar = Cast<ABasePlayer>(PC->GetPawn()))
-				{
-					MyChar->RegisterBoard(this);
-				}
-			}
+			LevelScript->RegisterBoard(this); // Or RegisterChair(this)
 		}
 	}
 

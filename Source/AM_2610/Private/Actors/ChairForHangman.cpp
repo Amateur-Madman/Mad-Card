@@ -2,6 +2,7 @@
 
 
 #include "Actors/ChairForHangman.h"
+#include "Both/BossLevelScript.h"
 #include "Actors/BasePlayer.h"
 #include "Actors/BasePlayerController.h"
 #include "Actors/WrittingBoard.h"
@@ -9,7 +10,6 @@
 #include "Both/CharacterAnimation.h" 
 #include "GameFramework/GameStateBase.h"
 #include "Components/BoxComponent.h"
-#include "Components/StaticMeshComponent.h"
 
 AChairForHangman::AChairForHangman()
 {
@@ -53,15 +53,9 @@ void AChairForHangman::BeginPlay()
 
     if (UWorld* World = GetWorld())
     {
-        if (AGameStateBase* GameState = World->GetGameState())
+        if (ABossLevelScript* LevelScript = Cast<ABossLevelScript>(World->GetLevelScriptActor()))
         {
-            if (ABasePlayerController* PC = Cast<ABasePlayerController>(GameState->GetGameInstance()->GetFirstLocalPlayerController(World)))
-            {
-                if (ABasePlayer* MyChar = Cast<ABasePlayer>(PC->GetPawn()))
-                {
-                    MyChar->RegisterChair(this);
-                }
-            }
+            LevelScript->RegisterChair(this);
         }
     }
 }
