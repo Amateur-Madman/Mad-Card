@@ -15,6 +15,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCardSlotEvent, int32, SlotIndex,
 // The selection moved. Direction is +1 (next), -1 (previous) or 0 (not a move: first card / refresh).
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnCardSelectionChanged, int32, SelectedIndex, UBaseCard*, Card, int32, Direction);
 
+// The player manually cycled the selection. Direction is +1 (next) or -1 (previous). NOT fired for the
+// auto-advance after a card is used, so it is the right hook for cycle audio / haptics.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCardCycled, int32, Direction);
+
 // Card is null for EmptySlot / HandFull. SlotIndex is INDEX_NONE for HandFull.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnCardRefused, int32, SlotIndex, UBaseCard*, Card, ECardFeedback, Reason);
 
@@ -83,13 +87,12 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Cards")
 	FOnHandChanged OnHandChanged;
 
-	// TRANSITIONAL: fires for every slot index 0..MaxSlots-1 on any hand change (Card is null past the
-	// end of the hand) so the old fixed-slot HUD keeps working. Remove when the carousel replaces it.
-	UPROPERTY(BlueprintAssignable, Category = "Cards")
-	FOnCardSlotEvent OnCardSlotChanged;
-
 	UPROPERTY(BlueprintAssignable, Category = "Cards")
 	FOnCardSelectionChanged OnCardSelectionChanged;
+
+	// The player cycled the selection by hand (not after a use). Only fires when the selection actually moved.
+	UPROPERTY(BlueprintAssignable, Category = "Cards")
+	FOnCardCycled OnCardCycled;
 
 	// A new card was added (NOT fired for StartingCards, so level start stays quiet)
 	UPROPERTY(BlueprintAssignable, Category = "Cards")
@@ -132,4 +135,4 @@ private:
 	int32 SelectedIndex = 0;
 	bool bUseOnCooldown = false;
 	FTimerHandle UseCooldownHandle;
-};	
+};

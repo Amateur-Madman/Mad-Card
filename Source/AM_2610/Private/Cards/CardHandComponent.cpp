@@ -5,10 +5,6 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 
-#if !UE_BUILD_SHIPPING
-#include "Engine/Engine.h"
-#endif
-
 UCardHandComponent::UCardHandComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -77,6 +73,7 @@ void UCardHandComponent::CycleSelection(int32 Direction)
 
 	const int32 Step = FMath::Sign(Direction);
 	SetSelection((SelectedIndex + Step + Count) % Count, Step);
+	OnCardCycled.Broadcast(Step);
 }
 
 bool UCardHandComponent::UseSelected()
@@ -128,29 +125,11 @@ bool UCardHandComponent::UseSelected()
 void UCardHandComponent::SetSelection(int32 NewIndex, int32 Direction)
 {
 	SelectedIndex = NewIndex;
-
-	UBaseCard* Card = GetSelectedCard();
-	OnCardSelectionChanged.Broadcast(SelectedIndex, Card, Direction);
-
-#if !UE_BUILD_SHIPPING
-	// TEMPORARY test readout until the carousel exists
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(7001, 2.f, FColor::Yellow,
-			FString::Printf(TEXT("Card selection: %d / %d  %s"), SelectedIndex + 1, Cards.Num(),
-				Card ? *Card->GetDisplayName().ToString() : TEXT("(none)")));
-	}
-#endif
+	OnCardSelectionChanged.Broadcast(SelectedIndex, GetSelectedCard(), Direction);
 }
 
 void UCardHandComponent::NotifyHandChanged()
 {
-	// Transitional shim for the fixed-slot HUD (see header)
-	for (int32 i = 0; i < MaxSlots; ++i)
-	{
-		OnCardSlotChanged.Broadcast(i, Cards.IsValidIndex(i) ? Cards[i].Get() : nullptr);
-	}
-
 	OnHandChanged.Broadcast();
 }
 
