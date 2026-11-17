@@ -6,6 +6,11 @@
 #include "NavigationSystem.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "NavMesh/NavMeshPath.h"
+#include "Actors/MadMan_Agent.h"
+
+AMadManController::AMadManController()
+{
+}
 
 void AMadManController::FollowSpline(USplineComponent* SplineToFollow, bool bShouldLoop)
 {
@@ -80,11 +85,22 @@ void AMadManController::FollowSpline(USplineComponent* SplineToFollow, bool bSho
 
 void AMadManController::OnMoveCompleted(FAIRequestID RequestID, const FPathFollowingResult& Result)
 {
-
 	Super::OnMoveCompleted(RequestID, Result);
 
-	if (bIsFollowingSpline && Result.IsSuccess())
+	if(Result.IsSuccess())
 	{
-		MoveToNextSplineStep();
+		if (bLoopSpline)
+		{
+			FollowSpline(TargetSpline, bLoopSpline);
+		}
+		else
+		{
+			TargetSpline = nullptr; // Clear the spline reference if not looping
+		}
+
+		if (AMadMan_Agent* Agent = Cast<AMadMan_Agent>(GetPawn()))
+		{
+			Agent->OnIntroSpot.Broadcast();
+		}
 	}
 }
