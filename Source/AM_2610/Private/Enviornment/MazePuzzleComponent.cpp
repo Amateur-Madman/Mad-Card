@@ -1,6 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Enviornment/MazePuzzleComponent.h"
+#include "Actors/BaseGameMode.h"
 #include "Enviornment/MazePipePiece.h"
 #include "Enviornment/MazePipeFitting.h"
 #include "Math/Box.h"
@@ -22,10 +23,13 @@
 #include "NiagaraSystem.h"
 #include "Sound/SoundBase.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/Material.h"
 #include "MaterialTypes.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 #include "NavigationData.h"
 #include "NavigationSystem.h"
 
@@ -34,6 +38,8 @@ UMazePuzzleComponent::UMazePuzzleComponent()
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.bStartWithTickEnabled = false;
     PrimaryComponentTick.TickInterval = 0.05f;
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> Cone(TEXT("/Engine/BasicShapes/Cone.Cone"));
+    DefaultPipeSpikeMesh = Cone.Object;
 #if WITH_EDITOR
     bTickInEditor = true;
 #endif
@@ -426,7 +432,7 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
     UE_LOG(LogTemp, Display, TEXT("Puzzle: Player entered %s. Starting the room's Weeping Angel spawns."), *GetNameSafe(GetOwner()));
 
     AdvanceEntryEnemySpawning(0.0f);
-    SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
 }
 
 void UMazePuzzleComponent::AdvanceEntryEnemySpawning(float DeltaTime)
@@ -477,7 +483,7 @@ void UMazePuzzleComponent::ArmPuzzle()
     // A validated entry trigger counts as ready while its Angels wait for the player.
     const bool bEnemiesReady = bWaitingForEnemyEntry || bEnemySpawningPending || (bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount);
     bArmed = bPrepared && (!bUsePressureButtons || SpawnedButtons.Num() == 2) && bEnemiesReady;
-    SetComponentTickEnabled(bPipeSteamChecking || (bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked))));
+    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || (bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked))));
     EnableEnemyEntryTrigger();
 }
 
@@ -605,6 +611,12 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         return;
     }
 
+    if (bPipeTrapTriggered)
+    {
+        AdvancePipeTrap(DeltaTime);
+        return;
+    }
+
     AdvanceEntryEnemySpawning(DeltaTime);
 
     if (!bArmed || !bPuzzleStarted || bButtonsUnlocked || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze || SpawnedButtons.Num() != 2 || !IsValid(SpawnedButtons[0]) || !IsValid(SpawnedButtons[1]))
@@ -630,7 +642,7 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         // Turn the console blue, but keep the door locked until it is used.
         bButtonsUnlocked = true;
         bConsoleRed = false;
-        SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending);
+        SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
         OnConsoleStateChanged.Broadcast(false);
         OnButtonsUnlocked.Broadcast();
     }
@@ -676,7 +688,7 @@ bool UMazePuzzleComponent::CompletePuzzle()
         IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
     }
     UpdateStatusLights();
-    SetComponentTickEnabled(bPipeSteamChecking || bEnemySpawningPending);
+    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
     QueueCompletedExitCheck();
     if (bUsePipePuzzle)
     {
@@ -939,6 +951,7 @@ void UMazePuzzleComponent::ClearSpawnedActors()
 
 void UMazePuzzleComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    ClearPipeTrap();
     ClearPipePreviewObjects();
     ClearRuntimePipeMeshes();
     bArmed = false;
@@ -1057,6 +1070,10 @@ bool UMazePuzzleComponent::BuildPipeLayouts(int32 Seed, bool bHard)
 
 bool UMazePuzzleComponent::GeneratePipeLayouts(int32 Seed)
 {
+    if (bPipeTrapTriggered || PipeTrap.IsActive())
+    {
+        return false;
+    }
     ResetPipeCompletion();
     ResetPipeLights();
     const UMazeSaveSubsystem* SaveSystem = UMazeSaveSubsystem::Get(this);
@@ -1285,6 +1302,30 @@ TSubclassOf<AMazePipePiece> UMazePuzzleComponent::GetPipeMeshClass(EMazePipePiec
 
 USceneComponent* UMazePuzzleComponent::GetPipeWallParent(bool bRightWall) const
 {
+    if (!IsValid(GetOwner()))
+    {
+        return nullptr;
+    }
+    if (bUsePipePuzzle && PipeTrapSettings.bEnabled)
+    {
+        // The grid arrows are geometry markers; they may stay below DefaultSceneRoot.
+        // Attach generated pipes to the same explicitly tagged roots as the spikes.
+        const FName RootTag = bRightWall ? PipeTrapSettings.RightWallRootTag : PipeTrapSettings.LeftWallRootTag;
+        if (RootTag.IsNone()) { return nullptr; }
+        TArray<USceneComponent*> Components;
+        GetOwner()->GetComponents<USceneComponent>(Components);
+        USceneComponent* Found = nullptr;
+        for (USceneComponent* Component : Components)
+        {
+            if (IsValid(Component) && Component->ComponentHasTag(RootTag))
+            {
+                if (Found) { return nullptr; }
+                Found = Component;
+            }
+        }
+        return Found == GetOwner()->GetRootComponent() ? nullptr : Found;
+    }
+
     TArray<UArrowComponent*> Arrows;
     GetOwner()->GetComponents<UArrowComponent>(Arrows);
     const FName Tag = bRightWall ? RightBottomLeftTag : LeftBottomLeftTag;
@@ -1346,6 +1387,17 @@ bool UMazePuzzleComponent::SpawnPipePiece(bool bRightWall, const FMazePipeGridFr
     Actor->ConfigureIndicators(Cell, Frame);
     Actor->InitializeInteraction(this, !bPreview);
     USceneComponent* Parent = GetPipeWallParent(bRightWall);
+    if (bUsePipePuzzle && PipeTrapSettings.bEnabled)
+    {
+        Parent = PipeTrap.FindPipePanelParent(GetOwner(), GetResolvedPipeTrapSettings(), bRightWall, Frame,
+            PipeWallOffset, Frame.GetCellCenter(CellIndex), Error);
+        if (!IsValid(Parent))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe panel attachment: %s"), *Error);
+            Actor->Destroy();
+            return false;
+        }
+    }
     if (IsValid(Parent))
     {
         Actor->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
@@ -1377,6 +1429,10 @@ void UMazePuzzleComponent::ClearPreview()
 
 void UMazePuzzleComponent::ClearPipePreviewObjects()
 {
+    if (!GetWorld() || !GetWorld()->IsGameWorld())
+    {
+        PipeTrap.ClearSpikes();
+    }
     ResetPipeCompletion();
     ResetPipeLights();
     bHasPipeLayoutPreview = false;
@@ -1442,6 +1498,7 @@ void UMazePuzzleComponent::ResetPipeCompletion()
 
 void UMazePuzzleComponent::OnComponentDestroyed(bool bDestroyingHierarchy)
 {
+    ClearPipeTrap();
     ClearPipePreviewObjects();
     ClearRuntimePipeMeshes();
     ClearPipeFailureTallies();
@@ -1587,6 +1644,7 @@ void UMazePuzzleComponent::WarnPipeLightMaterials() const
 
 void UMazePuzzleComponent::ClearRuntimePipeMeshes()
 {
+    PipeTrap.ClearSpikes();
     ResetPipeCompletion();
     ResetPipeLights();
     for (AMazePipePiece* Actor : PipeMeshActors)
@@ -1601,7 +1659,7 @@ void UMazePuzzleComponent::ClearRuntimePipeMeshes()
 
 bool UMazePuzzleComponent::BuildPipeMeshes()
 {
-    if (!bUsePipePuzzle || bPipeSteamChecking || !IsValid(GetWorld()) || !GetWorld()->IsGameWorld())
+    if (!bUsePipePuzzle || bPipeSteamChecking || bPipeTrapTriggered || !IsValid(GetWorld()) || !GetWorld()->IsGameWorld())
     {
         return false;
     }
@@ -1641,6 +1699,11 @@ bool UMazePuzzleComponent::BuildPipeMeshes()
                 return false;
             }
         }
+    }
+    if (!BuildPipeTrapSpikes(false))
+    {
+        ClearRuntimePipeMeshes();
+        return false;
     }
     return true;
 }
@@ -1762,7 +1825,7 @@ void UMazePuzzleComponent::ResetPipeLights()
         };
     ResetActors(PipeMeshPreviewActors);
     ResetActors(PipeMeshActors);
-    SetComponentTickEnabled(bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+    SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
 }
 
 void UMazePuzzleComponent::ApplyPipeSteamStep()
@@ -2063,6 +2126,101 @@ void UMazePuzzleComponent::ClearPipeFailureTallies()
     CachedPipeFailureTallyColorParameter = NAME_None;
 }
 
+FMazePipeTrapSettings UMazePuzzleComponent::GetResolvedPipeTrapSettings() const
+{
+    FMazePipeTrapSettings Settings = PipeTrapSettings;
+    if (!IsValid(Settings.SpikeMesh))
+    {
+        Settings.SpikeMesh = DefaultPipeSpikeMesh;
+    }
+    if (!IsValid(Settings.SpikeMaterial))
+    {
+        Settings.SpikeMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+    }
+    return Settings;
+}
+
+bool UMazePuzzleComponent::BuildPipeTrapSpikes(bool bPreview)
+{
+    const FMazePipeTrapSettings Settings = GetResolvedPipeTrapSettings();
+    if (!bUsePipePuzzle || !Settings.bEnabled || !Settings.bGenerateSpikesFromGrid)
+    {
+        PipeTrap.ClearSpikes();
+        return true;
+    }
+    FMazePipeGridFrame Left;
+    FMazePipeGridFrame Right;
+    FString Error;
+    if (!BuildPipeFrame(false, Left, Error) || !BuildPipeFrame(true, Right, Error)
+        || !PipeTrap.BuildSpikes(GetOwner(), Settings, Left, Right, GetPipeWallParent(false),
+            GetPipeWallParent(true), PipeWallOffset, bPreview, Error))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe spike grid: %s: %s"), *GetNameSafe(GetOwner()), *Error);
+        return false;
+    }
+    return true;
+}
+
+void UMazePuzzleComponent::PreviewPipeSpikes()
+{
+    if (GetWorld() && !GetWorld()->IsGameWorld())
+    {
+        BuildPipeTrapSpikes(true);
+    }
+}
+
+void UMazePuzzleComponent::StartPipeTrap()
+{
+    if (!bUsePipePuzzle || !bPipeTrapTriggered || !PipeTrapSettings.bEnabled || PipeTrap.IsActive())
+    {
+        return;
+    }
+    FMazePipeGridFrame Left;
+    FMazePipeGridFrame Right;
+    FString Error;
+    const FMazePipeTrapSettings Settings = GetResolvedPipeTrapSettings();
+    if (!BuildPipeFrame(false, Left, Error) || !BuildPipeFrame(true, Right, Error)
+        || !PipeTrap.Start(GetOwner(), Settings, Left, Right, GetPipeWallParent(false),
+            GetPipeWallParent(true), PipeWallOffset, Error))
+    {
+        UE_LOG(LogTemp, Error, TEXT("Pipe trap: %s: %s"), *GetNameSafe(GetOwner()), *Error);
+        return;
+    }
+    ClearPipeLeakSteam();
+    PipeTrapPhase = PipeTrap.GetPhase();
+}
+
+void UMazePuzzleComponent::AdvancePipeTrap(float DeltaTime)
+{
+    if (!bPipeTrapTriggered || !PipeTrap.IsActive() || !MazeGenerator.IsValid()
+        || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        SetComponentTickEnabled(false);
+        return;
+    }
+    const bool bHitPlayer = PipeTrap.Advance(DeltaTime);
+    PipeTrapPhase = PipeTrap.GetPhase();
+    SetComponentTickEnabled(PipeTrap.IsActive());
+    if (bHitPlayer)
+    {
+        if (ABaseGameMode* GameMode = Cast<ABaseGameMode>(UGameplayStatics::GetGameMode(this)))
+        {
+            // The helper latches contact before the existing loss/retry path can destroy this room.
+            GameMode->TriggerLose();
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe trap: %s could not find BaseGameMode. Check the map's GameMode Override."), *GetNameSafe(GetOwner()));
+        }
+    }
+}
+
+void UMazePuzzleComponent::ClearPipeTrap()
+{
+    PipeTrap.Clear();
+    PipeTrapPhase = EMazePipeTrapPhase::Idle;
+}
+
 void UMazePuzzleComponent::RecordPipeSteamFailure()
 {
     if (!bUsePipePuzzle || bUsePressureButtons || !bPrepared || !bArmed || !bPuzzleStarted || bPuzzleCompleted
@@ -2085,8 +2243,9 @@ void UMazePuzzleComponent::RecordPipeSteamFailure()
         PipeSteamHoldRemaining = 0.0f;
         IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
         UpdateStatusLights();
-        SetComponentTickEnabled(bEnemySpawningPending);
-        if (!OnPipeTrapTriggered.IsBound())
+        StartPipeTrap();
+        SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending);
+        if (!PipeTrapSettings.bEnabled && !OnPipeTrapTriggered.IsBound())
         {
             UE_LOG(LogTemp, Error, TEXT("Pipe trap: Bind On Pipe Trap Triggered to this room's trap sequence."));
         }
@@ -2099,14 +2258,12 @@ bool UMazePuzzleComponent::GetPipeLeakOutlet(bool bRightWall, const FMazePipeLea
     Location = FVector::ZeroVector;
     Direction = FVector::ZeroVector;
     const FMazePipeLayout& Layout = bRightWall ? CheckedRightPipeLayout : CheckedLeftPipeLayout;
-
     if (Leak.Direction < 0 || Leak.Direction > 3 || !Layout.Cells.IsValidIndex(Leak.CellIndex)
         || !FMath::IsFinite(PipeLeakSteamOutletOffset) || PipeLeakSteamOutletOffset < 0.0f
         || !(FMazePipePuzzle::GetPorts(Layout.Cells[Leak.CellIndex]) & (1 << Leak.Direction)))
     {
         return false;
     }
-
     FMazePipeGridFrame Frame;
     FString Error;
     if (!BuildPipeFrame(bRightWall, Frame, Error) || Frame.Columns <= 0 || Frame.Rows <= 0
@@ -2116,33 +2273,23 @@ bool UMazePuzzleComponent::GetPipeLeakOutlet(bool bRightWall, const FMazePipeLea
     {
         return false;
     }
-
+    // Leak directions already include cell rotation. These are the fitted sleeve openings.
     const FVector Directions[] = { Frame.Up, Frame.Right, -Frame.Up, -Frame.Right };
     Direction = Directions[Leak.Direction].GetSafeNormal();
-    Location = Frame.GetCellCenter(Leak.CellIndex)
-        + Direction * (Frame.CellSize * 0.5f + PipeLeakSteamOutletOffset);
-
+    Location = Frame.GetCellCenter(Leak.CellIndex) + Direction * (Frame.CellSize * 0.5f + PipeLeakSteamOutletOffset);
     if (FVector::DotProduct(Direction, FVector::UpVector) < -0.5)
     {
-        // Start at the center of the bottom opening.
-        Location = Frame.GetCellCenter(Leak.CellIndex)
-            + Direction * (Frame.CellSize * 0.5f);
-
-        const FVector SideAxis = FVector::CrossProduct(
-            FVector::UpVector, Frame.Inward).GetSafeNormal();
-
-        if (SideAxis.ContainsNaN() || SideAxis.Size() <= 0.0001)
+        const FVector TowardRoom = Frame.Inward.GetSafeNormal();
+        if (!FMath::IsFinite(PipeDiameterFraction) || PipeDiameterFraction <= 0.0f
+            || !FMath::IsFinite(PipeLeakSteamDownwardFrontClearance) || PipeLeakSteamDownwardFrontClearance < 0.0f
+            || TowardRoom.ContainsNaN() || TowardRoom.Size() <= 0.0001)
         {
             return false;
         }
-
-        // Choose one side for this burst.
-        const float SideSign = FMath::RandRange(0, 1) == 0 ? -1.0f : 1.0f;
-
-        // Clear the lip before the upward force bends the smoke.
-        Direction = (SideAxis * SideSign + Direction * 0.35f).GetSafeNormal();
+        // A rising plume must clear the cylinder radius before passing the pipe again.
+        const double PipeRadius = Frame.CellSize * PipeDiameterFraction * 0.5;
+        Location += TowardRoom * (PipeRadius + PipeLeakSteamDownwardFrontClearance);
     }
-
     return !Location.ContainsNaN() && !Direction.ContainsNaN() && Direction.Size() > 0.0001;
 }
 
@@ -2152,13 +2299,11 @@ void UMazePuzzleComponent::SpawnPipeSteamLeaks(bool bRightWall, const FMazePipeS
     {
         return;
     }
-
     const float Scale = FMath::IsFinite(PipeLeakSteamScale) ? FMath::Clamp(PipeLeakSteamScale, 0.01f, 10.0f) : 1.0f;
     const float Density = FMath::IsFinite(PipeLeakSteamDensity) ? FMath::Clamp(PipeLeakSteamDensity, 0.0f, 100.0f) : 0.5f;
     const float SpeedMin = FMath::IsFinite(PipeLeakSteamSpeedMin) ? FMath::Clamp(PipeLeakSteamSpeedMin, 0.0f, 1000.0f) : 10.0f;
     const float SpeedMax = FMath::IsFinite(PipeLeakSteamSpeedMax) ? FMath::Clamp(PipeLeakSteamSpeedMax, SpeedMin, 1000.0f) : FMath::Max(SpeedMin, 30.0f);
     const float Strength = FMath::IsFinite(PipeLeakSteamDirectionStrength) ? FMath::Clamp(PipeLeakSteamDirectionStrength, 0.0f, 1000.0f) : 100.0f;
-
     for (const FMazePipeLeak& Leak : Result.Leaks)
     {
         FVector Location;
@@ -2168,23 +2313,18 @@ void UMazePuzzleComponent::SpawnPipeSteamLeaks(bool bRightWall, const FMazePipeS
         {
             continue;
         }
-
-        UNiagaraComponent* Steam = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-            this, PipeLeakSteamSystem.Get(), Location, Direction.Rotation(),
-            FVector(Scale), false, false, ENCPoolMethod::None, false);
-
+        UNiagaraComponent* Steam = UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, PipeLeakSteamSystem.Get(),
+            Location, Direction.Rotation(), FVector(Scale), false, false, ENCPoolMethod::None, false);
         if (!IsValid(Steam))
         {
             continue;
         }
-
         Steam->SetVariableLinearColor(FName(TEXT("User.TrailColor")), PipeLeakSteamColor);
         Steam->SetVariableFloat(FName(TEXT("User.TrailDensity")), Density);
         Steam->SetVariableFloat(FName(TEXT("User.TrailSpeedMin")), SpeedMin);
         Steam->SetVariableFloat(FName(TEXT("User.TrailSpeedMax")), SpeedMax);
         Steam->SetVariableVec3(FName(TEXT("User.TrailVector")),
             bPipeLeakSteamVectorIsLocal ? FVector(Strength, 0, 0) : Direction * Strength);
-
         PipeLeakSteamComponents.Add(Steam);
         Steam->Activate(true);
     }
@@ -2278,7 +2418,7 @@ void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
         if (bPassed)
         {
             bPipeSteamChecking = false;
-            SetComponentTickEnabled(bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+            SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
         }
         ApplyPipeSteamStep();
         if (bPipeCheckUsesPreview)

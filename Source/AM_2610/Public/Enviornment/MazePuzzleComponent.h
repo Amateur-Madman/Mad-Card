@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "TimerManager.h"
 #include "Enviornment/MazePipePuzzle.h"
+#include "Enviornment/MazePipeTrap.h"
 #include "MazePuzzleComponent.generated.h"
 
 class AMazeGenerator;
@@ -57,6 +58,10 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes")
     bool bUsePipePuzzle = false;
+
+    // Flip each inside/outside panel pair, then slide the wall roots inward.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Trap")
+    FMazePipeTrapSettings PipeTrapSettings;
 
     // Test a placed board without a generator. This never completes a maze room or opens its door.
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Puzzle|Pipes|Testing")
@@ -213,7 +218,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
     bool bPipeTrapTriggered = false;
 
-    // Connect this once to the room's trap sequence. The final tally is red before it fires.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
+    EMazePipeTrapPhase PipeTrapPhase = EMazePipeTrapPhase::Idle;
+
+    // Optional trap sound/effects notification. Native wall motion starts before this fires.
     UPROPERTY(BlueprintAssignable, Category = "Puzzle|Pipes|Events")
     FOnPipeTrapTriggered OnPipeTrapTriggered;
 
@@ -395,6 +403,9 @@ public:
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Solved Pipe Meshes"))
     void PreviewSolvedPipeMeshes();
 
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Preview Pipe Spikes"))
+    void PreviewPipeSpikes();
+
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Pipe Preview", meta = (DisplayName = "Clear Preview"))
     void ClearPreview();
 
@@ -430,6 +441,16 @@ private:
     bool ArePipeWallsCompleted() const;
     bool IsStandalonePipeTest() const;
     void RecordPipeSteamFailure();
+    void StartPipeTrap();
+    void AdvancePipeTrap(float DeltaTime);
+    void ClearPipeTrap();
+    bool BuildPipeTrapSpikes(bool bPreview);
+    FMazePipeTrapSettings GetResolvedPipeTrapSettings() const;
+    FMazePipeTrap PipeTrap;
+
+    // Retain the engine cone on the native component so packaged builds cook it.
+    UPROPERTY()
+    TObjectPtr<UStaticMesh> DefaultPipeSpikeMesh;
     void PlayPipeFailureFeedback();
     void SpawnPipeSteamLeaks(bool bRightWall, const FMazePipeSteamResult& Result);
     bool GetPipeLeakOutlet(bool bRightWall, const FMazePipeLeak& Leak, FVector& Location, FVector& Direction) const;
