@@ -10,6 +10,8 @@
 #include "Cards/CardHandComponent.h"
 #include "Perception/AIPerceptionTypes.h"
 #include "Components/SlateWrapperTypes.h"
+#include "Actors/WrittingBoard.h"
+#include "Actors/ChairForHangman.h"
 #include "BasePlayer.generated.h"
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBroadcast);
 
@@ -233,5 +235,22 @@ private:
 	TWeakObjectPtr<AActor> ViewLockTarget;
 	FVector ViewLockOffset = FVector::ZeroVector;
 	float ViewLockSpeed = 6.f;
+#pragma endregion
+
+#pragma region Hangman Setup
+public:
+	// The board and the chair each register themselves here. Once both have,
+	// they get linked to each other and the references are cleared.
+	void RegisterBoard(AWrittingBoard* Board);
+	void RegisterChair(AChairForHangman* Chair);
+
+private:
+	void TryLinkActors();
+
+	UPROPERTY(Transient)
+	AWrittingBoard* WrittingBoard = nullptr;
+
+	UPROPERTY(Transient)
+	AChairForHangman* ChairForHangman = nullptr;
 #pragma endregion
 };

@@ -3,30 +3,29 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AIController.h"
+#include "Actors/BaseEnemyController.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AIPerceptionTypes.h"
 #include "ChaserController.generated.h"
 
 /**
- * 
+ * Chaser: stays idle until perception spots the player, then hunts whatever is on top of the
+ * target stack (player or decoy). BTAsset / PlayerKey / OnPossess come from ABaseEnemyController.
  */
 UCLASS()
-class AM_2610_API AChaserController : public AAIController
+class AM_2610_API AChaserController : public ABaseEnemyController
 {
 	GENERATED_BODY()
-protected:
-	virtual void OnPossess(APawn* InPawn) override;
 
 public:
 	AChaserController();
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Behavior Tree")
-	class UBehaviorTree* BTAsset;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Key")
-	FName PlayerKey;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	UAIPerceptionComponent* NativePerception;
+
+protected:
+	// Only retargets a chaser that is already hunting
+	virtual void HandleTargetChanged(AActor* NewTarget) override;
 
 private:
 	UFUNCTION()
