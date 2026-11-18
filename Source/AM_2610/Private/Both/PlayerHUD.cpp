@@ -158,3 +158,11 @@ void UPlayerHUD::BindCardHand(UCardHandComponent* Hand)
 		CardCarousel->BindToHand(Hand);
 	}
 }
+
+void UPlayerHUD::SetCardUIHidden(bool bShouldHide)
+{
+	if (CardCarousel)
+	{
+		CardCarousel->SetVisibility(bShouldHide ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	}
+}

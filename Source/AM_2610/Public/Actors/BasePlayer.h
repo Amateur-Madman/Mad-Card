@@ -18,6 +18,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBroadcast);
 // Fired whenever the focused interactable (or its prompt) changes.
 // Prompt.Target == nullptr means "hide the prompt".
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnInteractPromptChanged, const FInteractPrompt&, Prompt);
+
+// Shared by every delegate that only reports a bool state change
+// (card input enabled, card UI hidden).
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerBoolChanged, bool, bState);
 /**
  *
  */
@@ -155,10 +159,40 @@ private:
 #pragma endregion
 
 #pragma region Cards
+public:
+	// Blocks/allows cycling and using cards. Call with false while the player is busy with
+	// something else (Hangman, Pipes) so no card can be cast mid-activity.
+	UFUNCTION(BlueprintCallable, Category = "Cards")
+	void SetCardInputEnabled(bool bEnabled);
+
+	// Collapses/restores only the card carousel (the rest of the HUD is untouched)
+	UFUNCTION(BlueprintCallable, Category = "Cards")
+	void SetCardUIHidden(bool bShouldHide);
+
+	// Convenience for activities: true = input off + UI hidden, false = both restored
+	UFUNCTION(BlueprintCallable, Category = "Cards")
+	void SetCardsSuspended(bool bSuspended);
+
+	UFUNCTION(BlueprintPure, Category = "Cards")
+	bool IsCardInputEnabled() const { return bCardInputEnabled; }
+
+	UFUNCTION(BlueprintPure, Category = "Cards")
+	bool IsCardUIHidden() const { return bCardUIHidden; }
+
+	// Both use the shared FOnPlayerBoolChanged signature
+	UPROPERTY(BlueprintAssignable, Category = "Cards")
+	FOnPlayerBoolChanged OnCardInputEnabledChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Cards")
+	FOnPlayerBoolChanged OnCardUIHiddenChanged;
+
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Cards")
 	UCardHandComponent* CardHand;
 
+private:
+	bool bCardInputEnabled = true;
+	bool bCardUIHidden = false;
 #pragma endregion
 
 #pragma region Combat
