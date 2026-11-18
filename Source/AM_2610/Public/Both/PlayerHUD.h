@@ -36,6 +36,9 @@ public:
 	// Hands the hand to the card carousel, which listens to its events and draws it
 	void BindCardHand(UCardHandComponent* Hand);
 
+	
+	UFUNCTION()
+	void SetCardUIHidden(bool bShouldHide);
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
