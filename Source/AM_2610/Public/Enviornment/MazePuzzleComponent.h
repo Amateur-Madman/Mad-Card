@@ -63,6 +63,41 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Trap")
     FMazePipeTrapSettings PipeTrapSettings;
 
+    // Sequencer animates yaw relative to the console heading and absolute pitch.
+    // The existing first-person camera remains active; no camera cut is used.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "Puzzle|Pipes|Trap|Cinematic")
+    float PipeTrapLookYaw = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "Puzzle|Pipes|Trap|Cinematic")
+    float PipeTrapLookPitch = 0.0f;
+
+    // Sequencer keys this on when it wants control of the first-person view.
+    // Before that key, the saved console view stays untouched.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "Puzzle|Pipes|Trap|Cinematic")
+    bool bPipeTrapUseSequenceLook = false;
+
+    UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes|Trap")
+    bool IsPipeTrapPlayerLocked() const { return PipeTrapReveal.IsPlayerLocked(); }
+
+    UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes|Trap")
+    APawn* GetPipeTrapPlayer() const { return PipeTrapReveal.GetPlayer(); }
+
+    UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes|Trap")
+    APlayerController* GetPipeTrapPlayerController() const { return PipeTrapReveal.GetController(); }
+
+    // Call at the blackout key. Switches each pair to the spike side immediately;
+    // walls remain stationary and harmless until the final unlock event.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes|Trap")
+    bool SwitchPipeTrapWalls();
+
+    // Call at the last Sequencer event. Keeps its final facing direction and
+    // allows the existing trap closing/contact logic to begin on the next tick.
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes|Trap")
+    bool UnlockPipeTrapPlayer();
+
+    UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes|Trap")
+    void AbortPipeTrapSequence();
+
     // Test a placed board without a generator. This never completes a maze room or opens its door.
     UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Puzzle|Pipes|Testing")
     bool bAllowStandalonePipeTesting = false;
@@ -221,9 +256,14 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
     EMazePipeTrapPhase PipeTrapPhase = EMazePipeTrapPhase::Idle;
 
-    // Optional trap sound/effects notification. Native wall motion starts before this fires.
+    // Final failed console activation locks first, then fires this once. Bind it
+    // to Play on the room's sequence. Sequencer owns every cinematic stage.
     UPROPERTY(BlueprintAssignable, Category = "Puzzle|Pipes|Events")
     FOnPipeTrapTriggered OnPipeTrapTriggered;
+
+    // Fired after explicit unlock or cancellation. Stop the room's sequence here.
+    UPROPERTY(BlueprintAssignable, Category = "Puzzle|Pipes|Events")
+    FOnPipeTrapTriggered OnPipeTrapRevealFinished;
 
     // One shared count per room. Both failed Hard walls still consume one tally per test.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, DuplicateTransient, Category = "Puzzle|Pipes|State")
@@ -441,12 +481,15 @@ private:
     bool ArePipeWallsCompleted() const;
     bool IsStandalonePipeTest() const;
     void RecordPipeSteamFailure();
-    void StartPipeTrap();
     void AdvancePipeTrap(float DeltaTime);
     void ClearPipeTrap();
+    bool LockPipeTrapPlayer(APawn* Player);
+    void ReleasePipeTrapPlayer();
     bool BuildPipeTrapSpikes(bool bPreview);
     FMazePipeTrapSettings GetResolvedPipeTrapSettings() const;
     FMazePipeTrap PipeTrap;
+    FMazePipeTrapReveal PipeTrapReveal;
+    bool bPipeTrapSequenceFinished = false;
 
     // Retain the engine cone on the native component so packaged builds cook it.
     UPROPERTY()

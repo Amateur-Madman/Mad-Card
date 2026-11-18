@@ -5,6 +5,9 @@
 #include "MazePipeTrap.generated.h"
 
 class AActor;
+class APawn;
+class APlayerController;
+class UPawnMovementComponent;
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 class UPrimitiveComponent;
@@ -18,7 +21,8 @@ enum class EMazePipeTrapPhase : uint8
     Idle,
     Flipping,
     Closing,
-    Closed
+    Closed,
+    Revealing
 };
 
 UENUM(BlueprintType)
@@ -117,7 +121,10 @@ public:
         USceneComponent* LeftPipeParent, USceneComponent* RightPipeParent, float PipeWallOffset, FString& Error);
 
     // Returns true once on player-body contact. The puzzle component owns TriggerLose.
-    bool Advance(float DeltaTime);
+    bool Advance(float DeltaTime, bool bAllowContact = true);
+    // Sequencer calls this under blackout. No closing or contact is advanced here.
+    bool SwitchToSpikes();
+    bool AreWallsSwitched() const { return bWallsSwitched; }
     bool IsActive() const { return bStarted && !bHitReported; }
     EMazePipeTrapPhase GetPhase() const { return Phase; }
     void Clear();
@@ -170,6 +177,7 @@ private:
     TArray<FSpikeCollisionState> SpikeCollisions;
     float Elapsed = 0.0f;
     bool bStarted = false;
+    bool bWallsSwitched = false;
     bool bHitReported = false;
     EMazePipeTrapPhase Phase = EMazePipeTrapPhase::Idle;
     TArray<TWeakObjectPtr<UInstancedStaticMeshComponent>> GeneratedSpikes;
@@ -187,4 +195,31 @@ private:
     bool ReadWall(AActor* Room, FName Tag, FName SpikeTag, FWall& Wall, FString& Error);
     void ApplyPose(float TurnAlpha, float CloseAlpha);
     bool HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha) const;
+};
+
+// Synchronous console input lock. Sequencer owns all cinematic timing, lights,
+// sound and look keys. No fade, release timer or camera cut is performed here.
+class AM_2610_API FMazePipeTrapReveal
+{
+public:
+    bool LockPlayer(APawn* Player, FString& Error);
+    void ApplyLook(float YawOffset, float Pitch);
+    void UnlockPlayer();
+    void Clear();
+    bool IsPlayerLocked() const { return bLocked; }
+    bool HasValidPlayer() const;
+    APawn* GetPlayer() const { return Pawn.Get(); }
+    APlayerController* GetController() const { return Controller.Get(); }
+
+private:
+    void ReleasePlayer(bool bRestoreLook);
+    TWeakObjectPtr<APawn> Pawn;
+    TWeakObjectPtr<APlayerController> Controller;
+    TWeakObjectPtr<UPawnMovementComponent> Movement;
+    FRotator OriginalLook = FRotator::ZeroRotator;
+    uint8 OriginalMovementMode = 0;
+    uint8 OriginalCustomMovementMode = 0;
+    bool bMovementWasActive = false;
+    bool bPawnInputWasEnabled = false;
+    bool bLocked = false;
 };

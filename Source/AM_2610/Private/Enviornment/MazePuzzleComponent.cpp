@@ -432,7 +432,7 @@ void UMazePuzzleComponent::OnEnemyEntryTriggerBeginOverlap(UPrimitiveComponent* 
     UE_LOG(LogTemp, Display, TEXT("Puzzle: Player entered %s. Starting the room's Weeping Angel spawns."), *GetNameSafe(GetOwner()));
 
     AdvanceEntryEnemySpawning(0.0f);
-    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+    SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
 }
 
 void UMazePuzzleComponent::AdvanceEntryEnemySpawning(float DeltaTime)
@@ -483,7 +483,7 @@ void UMazePuzzleComponent::ArmPuzzle()
     // A validated entry trigger counts as ready while its Angels wait for the player.
     const bool bEnemiesReady = bWaitingForEnemyEntry || bEnemySpawningPending || (bDebugSpawnAllEnemies ? EnemySpawnIndex >= EnemySpawns.Num() : SpawnedWeepingAngels.Num() == RequestedEnemyCount);
     bArmed = bPrepared && (!bUsePressureButtons || SpawnedButtons.Num() == 2) && bEnemiesReady;
-    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || (bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked))));
+    SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bPipeSteamChecking || (bArmed && (bEnemySpawningPending || (bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked))));
     EnableEnemyEntryTrigger();
 }
 
@@ -562,6 +562,23 @@ bool UMazePuzzleComponent::ActivateConsole(APawn* Player)
             ResetPipeLights();
             return false;
         }
+        const bool bTerminalFailure = PipeFailureTallyCount > 0
+            && PipeFailedSteamChecks == PipeFailureTallyCount - 1
+            && ((bLeftPipeActive && !bLeftPipeCompleted && !LeftPipeSteamResult.bPassed)
+                || (bRightPipeActive && !bRightPipeCompleted && !RightPipeSteamResult.bPassed));
+        if (bTerminalFailure)
+        {
+            if (!LockPipeTrapPlayer(Player))
+            {
+                ResetPipeLights();
+                return false;
+            }
+            // This one failed check resolves in the console call. The player is
+            // already locked when the final tally requests Sequencer playback.
+            PipeSteamStep = LastPipeSteamStep;
+            ApplyPipeSteamStep();
+            AdvancePipeSteamCheck(0.0f);
+        }
         return true;
     }
 
@@ -604,6 +621,15 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    if (PipeTrapReveal.IsPlayerLocked() && (!PipeTrapReveal.HasValidPlayer()
+        || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze))
+    {
+        ReleasePipeTrapPlayer();
+        if (!bPipeTrapTriggered) { ResetPipeLights(); }
+        SetComponentTickEnabled(false);
+        return;
+    }
+    const bool bTrapWasTriggered = bPipeTrapTriggered;
     AdvancePipeSteamCheck(DeltaTime);
     if (GetWorld() && !GetWorld()->IsGameWorld())
     {
@@ -613,7 +639,7 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
 
     if (bPipeTrapTriggered)
     {
-        AdvancePipeTrap(DeltaTime);
+        AdvancePipeTrap(bTrapWasTriggered ? DeltaTime : 0.0f);
         return;
     }
 
@@ -642,7 +668,7 @@ void UMazePuzzleComponent::TickComponent(float DeltaTime, ELevelTick TickType, F
         // Turn the console blue, but keep the door locked until it is used.
         bButtonsUnlocked = true;
         bConsoleRed = false;
-        SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
+        SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
         OnConsoleStateChanged.Broadcast(false);
         OnButtonsUnlocked.Broadcast();
     }
@@ -688,7 +714,7 @@ bool UMazePuzzleComponent::CompletePuzzle()
         IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, false);
     }
     UpdateStatusLights();
-    SetComponentTickEnabled(PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
+    SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bPipeSteamChecking || bEnemySpawningPending);
     QueueCompletedExitCheck();
     if (bUsePipePuzzle)
     {
@@ -1798,6 +1824,7 @@ bool UMazePuzzleComponent::CheckPipePuzzle()
 
 void UMazePuzzleComponent::ResetPipeLights()
 {
+    if (!bPipeTrapTriggered) { ReleasePipeTrapPlayer(); }
     ClearPipeLeakSteam();
     bPipeSteamChecking = false;
     bPipeSteamResultShown = false;
@@ -1825,7 +1852,7 @@ void UMazePuzzleComponent::ResetPipeLights()
         };
     ResetActors(PipeMeshPreviewActors);
     ResetActors(PipeMeshActors);
-    SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+    SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
 }
 
 void UMazePuzzleComponent::ApplyPipeSteamStep()
@@ -2169,31 +2196,102 @@ void UMazePuzzleComponent::PreviewPipeSpikes()
     }
 }
 
-void UMazePuzzleComponent::StartPipeTrap()
+bool UMazePuzzleComponent::SwitchPipeTrapWalls()
 {
-    if (!bUsePipePuzzle || !bPipeTrapTriggered || !PipeTrapSettings.bEnabled || PipeTrap.IsActive())
+    if (!bUsePipePuzzle || !bPipeTrapTriggered || !PipeTrapSettings.bEnabled
+        || !PipeTrapReveal.IsPlayerLocked() || !PipeTrapReveal.HasValidPlayer()
+        || !MazeGenerator.IsValid() || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
     {
-        return;
+        return false;
     }
-    FMazePipeGridFrame Left;
-    FMazePipeGridFrame Right;
+    if (!PipeTrap.IsActive())
+    {
+        FMazePipeGridFrame Left;
+        FMazePipeGridFrame Right;
+        FString Error;
+        if (!BuildPipeFrame(false, Left, Error) || !BuildPipeFrame(true, Right, Error)
+            || !PipeTrap.Start(GetOwner(), GetResolvedPipeTrapSettings(), Left, Right,
+                GetPipeWallParent(false), GetPipeWallParent(true), PipeWallOffset, Error))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Pipe sequence wall switch: %s"), *Error);
+            return false;
+        }
+    }
+    const bool bSwitched = PipeTrap.SwitchToSpikes();
+    if (bSwitched) { ClearPipeLeakSteam(); }
+    SetComponentTickEnabled(true);
+    return bSwitched;
+}
+
+bool UMazePuzzleComponent::UnlockPipeTrapPlayer()
+{
+    if (bPipeTrapSequenceFinished) { return true; }
+    if (!bPipeTrapTriggered || !PipeTrapReveal.IsPlayerLocked() || !PipeTrapReveal.HasValidPlayer())
+    {
+        return false;
+    }
+    // Apply the final key now, even if Sequencer evaluates before this component's tick.
+    if (bPipeTrapUseSequenceLook) { PipeTrapReveal.ApplyLook(PipeTrapLookYaw, PipeTrapLookPitch); }
+    PipeTrapReveal.UnlockPlayer();
+    bPipeTrapUseSequenceLook = false;
+    bPipeTrapSequenceFinished = true;
+    PipeTrapPhase = PipeTrap.IsActive() ? EMazePipeTrapPhase::Closing : EMazePipeTrapPhase::Idle;
+    SetComponentTickEnabled(PipeTrap.IsActive());
+    OnPipeTrapRevealFinished.Broadcast();
+    return true;
+}
+
+void UMazePuzzleComponent::AbortPipeTrapSequence()
+{
+    ClearPipeTrap();
+    SetComponentTickEnabled(false);
+}
+
+bool UMazePuzzleComponent::LockPipeTrapPlayer(APawn* Player)
+{
+    const bool bAlreadyLocked = PipeTrapReveal.IsPlayerLocked();
     FString Error;
-    const FMazePipeTrapSettings Settings = GetResolvedPipeTrapSettings();
-    if (!BuildPipeFrame(false, Left, Error) || !BuildPipeFrame(true, Right, Error)
-        || !PipeTrap.Start(GetOwner(), Settings, Left, Right, GetPipeWallParent(false),
-            GetPipeWallParent(true), PipeWallOffset, Error))
+    if (!PipeTrapReveal.LockPlayer(Player, Error))
     {
-        UE_LOG(LogTemp, Error, TEXT("Pipe trap: %s: %s"), *GetNameSafe(GetOwner()), *Error);
-        return;
+        UE_LOG(LogTemp, Error, TEXT("Pipe reveal: %s"), *Error);
+        return false;
     }
-    ClearPipeLeakSteam();
-    PipeTrapPhase = PipeTrap.GetPhase();
+    if (!bAlreadyLocked)
+    {
+        bPipeTrapUseSequenceLook = false;
+        PipeTrapLookYaw = 0.0f; PipeTrapLookPitch = 0.0f;
+        bPipeTrapSequenceFinished = false;
+    }
+    return true;
+}
+
+void UMazePuzzleComponent::ReleasePipeTrapPlayer()
+{
+    const bool bWasLocked = PipeTrapReveal.IsPlayerLocked();
+    PipeTrapReveal.Clear();
+    bPipeTrapUseSequenceLook = false;
+    PipeTrapLookYaw = 0.0f; PipeTrapLookPitch = 0.0f;
+    if (bWasLocked && bPipeTrapTriggered) { OnPipeTrapRevealFinished.Broadcast(); }
 }
 
 void UMazePuzzleComponent::AdvancePipeTrap(float DeltaTime)
 {
-    if (!bPipeTrapTriggered || !PipeTrap.IsActive() || !MazeGenerator.IsValid()
+    if (!bPipeTrapTriggered || !MazeGenerator.IsValid()
         || MazeGenerator->LoopState != EMazeLoopState::TraversingMaze)
+    {
+        ReleasePipeTrapPlayer();
+        SetComponentTickEnabled(false);
+        return;
+    }
+    if (PipeTrapReveal.IsPlayerLocked())
+    {
+        if (bPipeTrapUseSequenceLook) { PipeTrapReveal.ApplyLook(PipeTrapLookYaw, PipeTrapLookPitch); }
+        PipeTrapPhase = EMazePipeTrapPhase::Revealing;
+        // No reveal clock: no wall advance, damage, fade or automatic unlock.
+        SetComponentTickEnabled(true);
+        return;
+    }
+    if (!bPipeTrapSequenceFinished || !PipeTrap.IsActive())
     {
         SetComponentTickEnabled(false);
         return;
@@ -2217,7 +2315,9 @@ void UMazePuzzleComponent::AdvancePipeTrap(float DeltaTime)
 
 void UMazePuzzleComponent::ClearPipeTrap()
 {
+    ReleasePipeTrapPlayer();
     PipeTrap.Clear();
+    bPipeTrapSequenceFinished = false;
     PipeTrapPhase = EMazePipeTrapPhase::Idle;
 }
 
@@ -2243,13 +2343,13 @@ void UMazePuzzleComponent::RecordPipeSteamFailure()
         PipeSteamHoldRemaining = 0.0f;
         IMazeInterface::Execute_SetMazeDoorLocked(GetOwner(), PuzzleDoorTag, true);
         UpdateStatusLights();
-        StartPipeTrap();
-        SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending);
-        if (!PipeTrapSettings.bEnabled && !OnPipeTrapTriggered.IsBound())
+        PipeTrapPhase = EMazePipeTrapPhase::Revealing;
+        SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || bEnemySpawningPending);
+        if (!OnPipeTrapTriggered.IsBound())
         {
             UE_LOG(LogTemp, Error, TEXT("Pipe trap: Bind On Pipe Trap Triggered to this room's trap sequence."));
         }
-        OnPipeTrapTriggered.Broadcast();
+        if (PipeTrapReveal.IsPlayerLocked()) { OnPipeTrapTriggered.Broadcast(); }
     }
 }
 
@@ -2417,8 +2517,9 @@ void UMazePuzzleComponent::AdvancePipeSteamCheck(float DeltaTime)
         PipeSteamHoldRemaining = !bPassed && FMath::IsFinite(PipeSteamHoldSeconds) ? FMath::Clamp(PipeSteamHoldSeconds, 0.0f, 30.0f) : 0.0f;
         if (bPassed)
         {
+            ReleasePipeTrapPlayer();
             bPipeSteamChecking = false;
-            SetComponentTickEnabled(PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
+            SetComponentTickEnabled(PipeTrapReveal.IsPlayerLocked() || PipeTrap.IsActive() || bEnemySpawningPending || (bArmed && bPuzzleStarted && bUsePressureButtons && !bButtonsUnlocked));
         }
         ApplyPipeSteamStep();
         if (bPipeCheckUsesPreview)

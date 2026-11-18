@@ -11,6 +11,10 @@
 #include "Enviornment/MazePipePuzzle.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PawnMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInterface.h"
 #include "Math/RotationMatrix.h"
 
@@ -763,7 +767,19 @@ bool FMazePipeTrap::HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha)
     return false;
 }
 
-bool FMazePipeTrap::Advance(float DeltaTime)
+bool FMazePipeTrap::SwitchToSpikes()
+{
+    if (!IsActive()) { return false; }
+    if (bWallsSwitched) { return true; }
+    if (!Walls[0].Root.IsValid() || !Walls[1].Root.IsValid()) { return false; }
+    ApplyPose(1.0f, 0.0f);
+    Elapsed = ActiveSettings.TurnSeconds + ActiveSettings.PauseAfterTurn;
+    bWallsSwitched = true;
+    Phase = EMazePipeTrapPhase::Revealing;
+    return true;
+}
+
+bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact)
 {
     if (!IsActive() || !FMath::IsFinite(DeltaTime) || DeltaTime < 0.0f)
     {
@@ -781,11 +797,12 @@ bool FMazePipeTrap::Advance(float DeltaTime)
     const float Turn = FMath::Clamp(Elapsed / ActiveSettings.TurnSeconds, 0.0f, 1.0f);
     const float Close = FMath::Clamp((Elapsed - CloseStart) / ActiveSettings.CloseSeconds, 0.0f, 1.0f);
     ApplyPose(Turn, Close);
+    bWallsSwitched = Turn >= 1.0f;
     Phase = Close >= 1.0f ? EMazePipeTrapPhase::Closed
         : Elapsed >= CloseStart ? EMazePipeTrapPhase::Closing : EMazePipeTrapPhase::Flipping;
     // Spike damage begins when the 180 degree turn completes. While closing, the
     // query includes the distance moved since the previous tick, including a hitch.
-    if (Turn >= 1.0f && HasPlayerContact(Previous, Close))
+    if (bAllowContact && Turn >= 1.0f && HasPlayerContact(Previous, Close))
     {
         bHitReported = true;
         return true;
@@ -831,6 +848,7 @@ void FMazePipeTrap::ClearMotion()
     SpikeCollisions.Reset();
     Elapsed = 0.0f;
     bStarted = false;
+    bWallsSwitched = false;
     bHitReported = false;
     Phase = EMazePipeTrapPhase::Idle;
 }
@@ -839,4 +857,97 @@ void FMazePipeTrap::Clear()
 {
     ClearMotion();
     ClearSpikes();
+}
+
+bool FMazePipeTrapReveal::HasValidPlayer() const
+{
+    return Pawn.IsValid() && Controller.IsValid()
+        && Controller->GetPawn() == Pawn.Get() && Pawn->GetController() == Controller.Get();
+}
+
+bool FMazePipeTrapReveal::LockPlayer(APawn* Player, FString& Error)
+{
+    Error.Reset();
+    if (bLocked)
+    {
+        if (HasValidPlayer() && Pawn.Get() == Player) { return true; }
+        Error = TEXT("The reveal lock belongs to a different or unavailable player.");
+        return false;
+    }
+    APlayerController* PC = IsValid(Player) ? Cast<APlayerController>(Player->GetController()) : nullptr;
+    if (!IsValid(PC) || !PC->IsLocalController()
+        || PC->GetPawn() != Player || !Player->IsPlayerControlled())
+    {
+        Error = TEXT("The console sequence needs its locally controlled player.");
+        return false;
+    }
+    Pawn = Player; Controller = PC;
+    OriginalLook = PC->GetControlRotation();
+    bPawnInputWasEnabled = Player->InputEnabled();
+    // Balanced controller locks preserve any input suppression owned by other systems.
+    PC->SetIgnoreMoveInput(true);
+    PC->SetIgnoreLookInput(true);
+    Player->DisableInput(PC);
+    Player->ConsumeMovementInputVector();
+    if (ACharacter* Character = Cast<ACharacter>(Player)) { Character->StopJumping(); }
+    Movement = Player->GetMovementComponent();
+    if (Movement.IsValid())
+    {
+        bMovementWasActive = Movement->IsActive();
+        Movement->StopMovementImmediately();
+        if (UCharacterMovementComponent* CharacterMove = Cast<UCharacterMovementComponent>(Movement.Get()))
+        {
+            OriginalMovementMode = static_cast<uint8>(CharacterMove->MovementMode);
+            OriginalCustomMovementMode = CharacterMove->CustomMovementMode;
+            CharacterMove->DisableMovement();
+        }
+        Movement->Deactivate();
+    }
+    bLocked = true;
+    return true;
+}
+
+void FMazePipeTrapReveal::ApplyLook(float YawOffset, float Pitch)
+{
+    if (bLocked && HasValidPlayer() && FMath::IsFinite(YawOffset) && FMath::IsFinite(Pitch))
+    {
+        Controller->SetControlRotation(FRotator(FMath::Clamp(static_cast<double>(Pitch), -80.0, 80.0),
+            OriginalLook.Yaw + FMath::Clamp(YawOffset, -360.0f, 360.0f), OriginalLook.Roll));
+    }
+}
+
+void FMazePipeTrapReveal::UnlockPlayer()
+{
+    ReleasePlayer(false);
+}
+
+void FMazePipeTrapReveal::ReleasePlayer(bool bRestoreLook)
+{
+    if (bLocked)
+    {
+        const bool bSamePawn = Pawn.IsValid() && Controller.IsValid() && Controller->GetPawn() == Pawn.Get();
+        if (Movement.IsValid())
+        {
+            Movement->StopMovementImmediately();
+            if (UCharacterMovementComponent* CharacterMove = Cast<UCharacterMovementComponent>(Movement.Get()))
+            {
+                CharacterMove->SetMovementMode(static_cast<EMovementMode>(OriginalMovementMode), OriginalCustomMovementMode);
+            }
+            if (bMovementWasActive) { Movement->Activate(); }
+        }
+        if (Controller.IsValid())
+        {
+            Controller->SetIgnoreMoveInput(false);
+            Controller->SetIgnoreLookInput(false);
+            if (bRestoreLook && bSamePawn) { Controller->SetControlRotation(OriginalLook); }
+        }
+        if (bSamePawn && bPawnInputWasEnabled) { Pawn->EnableInput(Controller.Get()); }
+    }
+    bLocked = false;
+}
+
+void FMazePipeTrapReveal::Clear()
+{
+    ReleasePlayer(true);
+    Pawn.Reset(); Controller.Reset(); Movement.Reset();
 }

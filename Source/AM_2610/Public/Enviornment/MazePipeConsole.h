@@ -10,8 +10,26 @@
 class UBoxComponent;
 class UAudioComponent;
 class UMazePuzzleComponent;
+class APawn;
+class UPrimitiveComponent;
 class USceneComponent;
+class USphereComponent;
 class UStaticMeshComponent;
+struct FHitResult;
+
+UENUM()
+enum class EMazePipeConsoleFocus : uint8
+{
+    WaitingForPlayerQuery,
+    PlayerUnavailable,
+    NoPipeRoom,
+    PuzzleNotReady,
+    InvalidTarget,
+    AimOffScreen,
+    OutOfReach,
+    ViewBlocked,
+    Ready
+};
 
 // The existing player interaction system supplies the E input and HUD prompt.
 UCLASS(Blueprintable)
@@ -35,6 +53,23 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe Console")
     TObjectPtr<UBoxComponent> InteractionBox;
 
+    // Registers a nearby console with the player's HUD. The screen rectangle decides aim.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe Console")
+    TObjectPtr<USphereComponent> InteractionRange;
+
+    // Maximum distance from the camera to the aimed point on the glass, in world centimeters.
+    UPROPERTY(EditAnywhere, BlueprintSetter = SetMaxUseDistance, Category = "Pipe Console|Interaction", meta = (ClampMin = "0.0", Units = "cm"))
+    float MaxUseDistance = 120.0f;
+
+    UFUNCTION(BlueprintSetter, Category = "Pipe Console|Interaction")
+    void SetMaxUseDistance(float NewDistance);
+
+    UPROPERTY(VisibleInstanceOnly, Transient, Category = "Pipe Console|Debug")
+    EMazePipeConsoleFocus LastFocusCheck = EMazePipeConsoleFocus::WaitingForPlayerQuery;
+
+    UPROPERTY(VisibleInstanceOnly, Transient, Category = "Pipe Console|Debug")
+    TWeakObjectPtr<UPrimitiveComponent> LastBlockingComponent;
+
     // Assign the console test cue here. It plays only when a new steam check starts.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Pipe Console|Audio")
     TObjectPtr<UAudioComponent> SteamTestAudio;
@@ -52,4 +87,10 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Pipe Console")
     UMazePuzzleComponent* GetPipePuzzle() const;
+
+protected:
+    virtual void PostInitializeComponents() override;
+
+private:
+    EMazePipeConsoleFocus EvaluateFocus(APawn* Player, FHitResult& Obstruction) const;
 };
