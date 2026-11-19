@@ -21,6 +21,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Events")
 	FOnPlayerReady OnPlayerReady;
 
+	UPROPERTY()
 	class AWrittingBoard* WrittingBoard;
 
 	void LinkToWrittingBoard(class AWrittingBoard* InWrittingBoard) { WrittingBoard = InWrittingBoard; }
