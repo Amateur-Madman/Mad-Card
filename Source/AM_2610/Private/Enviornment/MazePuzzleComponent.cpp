@@ -2211,7 +2211,7 @@ bool UMazePuzzleComponent::SwitchPipeTrapWalls()
         FString Error;
         if (!BuildPipeFrame(false, Left, Error) || !BuildPipeFrame(true, Right, Error)
             || !PipeTrap.Start(GetOwner(), GetResolvedPipeTrapSettings(), Left, Right,
-                GetPipeWallParent(false), GetPipeWallParent(true), PipeWallOffset, Error))
+                GetPipeWallParent(false), GetPipeWallParent(true), PipeWallOffset, Error, CompletedExitArea.Get()))
         {
             UE_LOG(LogTemp, Error, TEXT("Pipe sequence wall switch: %s"), *Error);
             return false;
@@ -2235,7 +2235,11 @@ bool UMazePuzzleComponent::UnlockPipeTrapPlayer()
     PipeTrapReveal.UnlockPlayer();
     bPipeTrapUseSequenceLook = false;
     bPipeTrapSequenceFinished = true;
-    PipeTrapPhase = PipeTrap.IsActive() ? EMazePipeTrapPhase::Closing : EMazePipeTrapPhase::Idle;
+    PipeTrapPhase = EMazePipeTrapPhase::Idle;
+    if (PipeTrap.IsActive())
+    {
+        PipeTrapPhase = PipeTrap.AreWallsSwitched() ? EMazePipeTrapPhase::Closing : EMazePipeTrapPhase::Flipping;
+    }
     SetComponentTickEnabled(PipeTrap.IsActive());
     OnPipeTrapRevealFinished.Broadcast();
     return true;
@@ -2286,8 +2290,12 @@ void UMazePuzzleComponent::AdvancePipeTrap(float DeltaTime)
     if (PipeTrapReveal.IsPlayerLocked())
     {
         if (bPipeTrapUseSequenceLook) { PipeTrapReveal.ApplyLook(PipeTrapLookYaw, PipeTrapLookPitch); }
+        if (PipeTrap.IsActive())
+        {
+            // The switch cue starts this trap. Allow its panel rotation during the input lock.
+            PipeTrap.Advance(DeltaTime, false);
+        }
         PipeTrapPhase = EMazePipeTrapPhase::Revealing;
-        // No reveal clock: no wall advance, damage, fade or automatic unlock.
         SetComponentTickEnabled(true);
         return;
     }

@@ -7,6 +7,7 @@
 class AActor;
 class APawn;
 class APlayerController;
+class UBoxComponent;
 class UPawnMovementComponent;
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
@@ -87,11 +88,9 @@ struct AM_2610_API FMazePipeTrapSettings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pipe Trap")
     FName SpikeTag = TEXT("PipeTrapSpike");
 
+    // Duration of the eased 180-degree panel turn.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pipe Trap", meta = (ClampMin = "0.1", ClampMax = "10.0", Units = "s"))
     float TurnSeconds = 1.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pipe Trap", meta = (ClampMin = "0.0", ClampMax = "10.0", Units = "s"))
-    float PauseAfterTurn = 0.25f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pipe Trap", meta = (ClampMin = "0.1", ClampMax = "120.0", Units = "s"))
     float CloseSeconds = 6.0f;
@@ -118,8 +117,10 @@ public:
 
     bool Start(AActor* Room, const FMazePipeTrapSettings& Settings,
         const FMazePipeGridFrame& LeftFrame, const FMazePipeGridFrame& RightFrame,
-        USceneComponent* LeftPipeParent, USceneComponent* RightPipeParent, float PipeWallOffset, FString& Error);
+        USceneComponent* LeftPipeParent, USceneComponent* RightPipeParent, float PipeWallOffset, FString& Error,
+        const UBoxComponent* RoomArea = nullptr);
 
+    // While Sequencer owns the player, only the turn can advance.
     // Returns true once on player-body contact. The puzzle component owns TriggerLose.
     bool Advance(float DeltaTime, bool bAllowContact = true);
     // Sequencer calls this under blackout. No closing or contact is advanced here.
@@ -155,7 +156,8 @@ private:
         FVector Pivot = FVector::ZeroVector;
         FVector Up = FVector::UpVector;
         FVector Inward = FVector::ForwardVector;
-        FBox SpikeBounds = FBox(ForceInit);
+        FTransform ContactSpace;
+        FBox ContactBounds = FBox(ForceInit);
         float Travel = 0.0f;
         TArray<FPanel> Panels;
     };
@@ -190,7 +192,7 @@ private:
     static bool ReadPanels(AActor* Room, USceneComponent* Root, const FMazePipeGridFrame& Frame,
         float PipeWallOffset, const FMazePipeTrapSettings& Settings, TArray<FPanel>& Panels, FString& Error);
     static int32 FindPanelIndex(const TArray<FPanel>& Panels, const FVector& Point, bool bOutside);
-    bool ReadFlippedSpikeBounds(FWall& Wall, int32 Side, FName SpikeTag, FString& Error) const;
+    static bool ReadFlippedSpikeBounds(const FWall& Wall, int32 Side, FName SpikeTag, FBox& Bounds, FString& Error);
     void ClearMotion();
     bool ReadWall(AActor* Room, FName Tag, FName SpikeTag, FWall& Wall, FString& Error);
     void ApplyPose(float TurnAlpha, float CloseAlpha);

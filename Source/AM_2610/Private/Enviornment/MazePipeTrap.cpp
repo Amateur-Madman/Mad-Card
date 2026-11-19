@@ -2,6 +2,7 @@
 
 #include "CollisionQueryParams.h"
 #include "CollisionShape.h"
+#include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
@@ -93,6 +94,7 @@ bool FMazePipeTrap::ReadWall(AActor* Room, FName Tag, FName SpikeTag, FWall& Wal
     TArray<USceneComponent*> Children;
     Root->GetChildrenComponents(true, Children);
     Children.Insert(Root, 0);
+    bool bHasSpikes = false;
     for (USceneComponent* Child : Children)
     {
         if (!IsValid(Child))
@@ -130,14 +132,13 @@ bool FMazePipeTrap::ReadWall(AActor* Room, FName Tag, FName SpikeTag, FWall& Wal
             Error = FString::Printf(TEXT("Tagged spike component %s has invalid or empty bounds."), *Child->GetName());
             return false;
         }
-        Wall.SpikeBounds += Bounds.Origin - Bounds.BoxExtent;
-        Wall.SpikeBounds += Bounds.Origin + Bounds.BoxExtent;
+        bHasSpikes = true;
         FSpikeCollisionState Collision;
         Collision.Component = Primitive;
         Collision.Collision = Primitive->GetCollisionEnabled();
         SpikeCollisions.Add(Collision);
     }
-    if (!Wall.SpikeBounds.IsValid)
+    if (!bHasSpikes)
     {
         Error = FString::Printf(TEXT("Wall %s needs spike meshes beneath it with Component Tag %s (or a tagged spike-only group/ChildActor component)."), *Tag.ToString(), *SpikeTag.ToString());
         return false;
@@ -342,9 +343,9 @@ USceneComponent* FMazePipeTrap::FindPipePanelParent(AActor* Room, const FMazePip
     return Panels.IsValidIndex(Index) ? Panels[Index].Inside.Get() : nullptr;
 }
 
-bool FMazePipeTrap::ReadFlippedSpikeBounds(FWall& Wall, int32 Side, FName SpikeTag, FString& Error) const
+bool FMazePipeTrap::ReadFlippedSpikeBounds(const FWall& Wall, int32 Side, FName SpikeTag, FBox& Bounds, FString& Error)
 {
-    FBox Bounds(ForceInit);
+    Bounds = FBox(ForceInit);
     TArray<USceneComponent*> Children;
     Wall.Root->GetChildrenComponents(true, Children);
     for (USceneComponent* Child : Children)
@@ -369,7 +370,6 @@ bool FMazePipeTrap::ReadFlippedSpikeBounds(FWall& Wall, int32 Side, FName SpikeT
         Bounds += B.Origin - B.BoxExtent; Bounds += B.Origin + B.BoxExtent;
     }
     if (!Bounds.IsValid) { Error = TEXT("No spike bounds were found on the outside panels."); return false; }
-    Wall.SpikeBounds = Bounds;
     return true;
 }
 
@@ -422,7 +422,7 @@ bool FMazePipeTrap::BuildSpikes(AActor* Room, const FMazePipeTrapSettings& Setti
     }
     USceneComponent* PipeParents[2] = { LeftPipeParent, RightPipeParent };
     const FMazePipeGridFrame Frames[2] = { LeftFrame, RightFrame };
-    TArray<FPanel> PanelSets[2];
+    TArray<FPanel> RevealedPanels[2];
     TArray<TArray<FTransform>> Instances[2];
     for (int32 Side = 0; Side < 2; ++Side)
     {
@@ -489,13 +489,25 @@ bool FMazePipeTrap::BuildSpikes(AActor* Room, const FMazePipeTrapSettings& Setti
                 SideName, FVector::DotProduct(Frame.Right, Frame.Up), FVector::DotProduct(Frame.Right, Frame.Inward), FVector::DotProduct(Frame.Up, Frame.Inward));
             return false;
         }
-        if (!ReadPanels(Room, Root, Frame, PipeWallOffset, Settings, PanelSets[Side], Error))
+        TArray<FPanel>& Panels = RevealedPanels[Side];
+        if (!ReadPanels(Room, Root, Frame, PipeWallOffset, Settings, Panels, Error))
         {
             return false;
         }
-        Instances[Side].SetNum(PanelSets[Side].Num());
+        Instances[Side].SetNum(Panels.Num());
         const FTransform Space = GetGridSpace(Frame, PipeWallOffset);
-        const FQuat Rotation = FRotationMatrix::MakeFromXZ(Frame.Right, -Frame.Inward).ToQuat();
+        const float FlipAngle = Side == 0 ? PI : -PI;
+        // Lay out a single grid on the revealed wall. Reflecting the original grid
+        // around each panel's own pivot can change the spacing at the seams.
+        for (FPanel& Panel : Panels)
+        {
+            const FTransform GridFlip = MakePose(FTransform::Identity,
+                Space.InverseTransformPosition(Panel.Pivot), Space.GetRotation().UnrotateVector(Panel.Axis),
+                FVector::ZeroVector, FlipAngle, 0.0f);
+            Panel.OutsideBounds = Panel.OutsideBounds.TransformBy(GridFlip);
+            Panel.OutsideWorld = MakePose(Panel.OutsideWorld, Panel.Pivot, Panel.Axis, Frame.Inward, FlipAngle, 0.0f);
+        }
+        const FQuat OutwardRotation = FRotationMatrix::MakeFromXZ(Frame.Right, -Frame.Inward).ToQuat();
         const double Diameter = Frame.CellSize * Settings.SpikeDiameterFraction;
         const FVector Scale(Diameter / NativeSize.X, Diameter / NativeSize.Y, Settings.SpikeLength / NativeSize.Z);
         const FVector NativeBase(NativeBounds.GetCenter().X, NativeBounds.GetCenter().Y, NativeBounds.Min.Z);
@@ -503,13 +515,15 @@ bool FMazePipeTrap::BuildSpikes(AActor* Room, const FMazePipeTrapSettings& Setti
         {
             const FVector Cell = Frame.GetCellCenter(Index);
             const FVector Point = Space.InverseTransformPosition(Cell);
-            const int32 PanelIndex = FindPanelIndex(PanelSets[Side], Point, true);
-            if (!PanelSets[Side].IsValidIndex(PanelIndex)) { Error = TEXT("A spike cell has no outside panel."); return false; }
-            const FPanel& Panel = PanelSets[Side][PanelIndex];
-            const double OutsideDepth = Panel.OutsideBounds.Min.X;
-            const FVector Base = Cell + Frame.Inward * (OutsideDepth - Settings.SpikeSurfaceOffset - Point.X);
-            const FTransform WorldPose(Rotation, Base - Rotation.RotateVector(NativeBase * Scale), Scale);
-            const FTransform LocalPose = WorldPose.GetRelativeTransform(Panel.OutsideWorld);
+            const int32 PanelIndex = FindPanelIndex(Panels, Point, true);
+            if (!Panels.IsValidIndex(PanelIndex)) { Error = TEXT("A spike cell has no outside panel."); return false; }
+            const FPanel& Panel = Panels[PanelIndex];
+            const FQuat Rotation = FQuat(Panel.Axis, FlipAngle) * OutwardRotation;
+            const double FaceDepth = Panel.OutsideBounds.Max.X;
+            const FVector Base = Cell + Frame.Inward * (FaceDepth + Settings.SpikeSurfaceOffset - Point.X);
+            const FTransform RevealedPose(Rotation, Base - Rotation.RotateVector(NativeBase * Scale), Scale);
+            // This offset is local to the panel at every angle, including its starting pose.
+            const FTransform LocalPose = RevealedPose.GetRelativeTransform(Panel.OutsideWorld);
             if (LocalPose.ContainsNaN())
             {
                 Error = TEXT("A generated spike has an invalid transform.");
@@ -522,13 +536,13 @@ bool FMazePipeTrap::BuildSpikes(AActor* Room, const FMazePipeTrapSettings& Setti
     ClearSpikes();
     for (int32 Side = 0; Side < 2; ++Side)
     {
-        for (int32 PanelIndex = 0; PanelIndex < PanelSets[Side].Num(); ++PanelIndex)
+        for (int32 PanelIndex = 0; PanelIndex < RevealedPanels[Side].Num(); ++PanelIndex)
         {
             if (Instances[Side][PanelIndex].IsEmpty()) { continue; }
             UInstancedStaticMeshComponent* Mesh = NewObject<UInstancedStaticMeshComponent>(Room, NAME_None, RF_Transient | RF_DuplicateTransient);
             GeneratedSpikes.Add(Mesh);
             Room->AddInstanceComponent(Mesh);
-            Mesh->SetupAttachment(PanelSets[Side][PanelIndex].Outside.Get());
+            Mesh->SetupAttachment(RevealedPanels[Side][PanelIndex].Outside.Get());
             Mesh->SetRelativeTransform(FTransform::Identity);
             Mesh->SetMobility(EComponentMobility::Movable);
             Mesh->SetStaticMesh(Settings.SpikeMesh);
@@ -572,7 +586,8 @@ void FMazePipeTrap::ClearSpikes()
 
 bool FMazePipeTrap::Start(AActor* Room, const FMazePipeTrapSettings& Settings,
     const FMazePipeGridFrame& LeftFrame, const FMazePipeGridFrame& RightFrame,
-    USceneComponent* LeftPipeParent, USceneComponent* RightPipeParent, float PipeWallOffset, FString& Error)
+    USceneComponent* LeftPipeParent, USceneComponent* RightPipeParent, float PipeWallOffset, FString& Error,
+    const UBoxComponent* RoomArea)
 {
     Error.Reset();
     if (bStarted)
@@ -590,7 +605,6 @@ bool FMazePipeTrap::Start(AActor* Room, const FMazePipeTrapSettings& Settings,
         || Settings.LeftWallRootTag == Settings.RightWallRootTag
         || Settings.SpikeTag == Settings.LeftWallRootTag || Settings.SpikeTag == Settings.RightWallRootTag
         || !FMath::IsFinite(Settings.TurnSeconds) || Settings.TurnSeconds < 0.1f || Settings.TurnSeconds > 10.0f
-        || !FMath::IsFinite(Settings.PauseAfterTurn) || Settings.PauseAfterTurn < 0.0f || Settings.PauseAfterTurn > 10.0f
         || !FMath::IsFinite(Settings.CloseSeconds) || Settings.CloseSeconds < 0.1f || Settings.CloseSeconds > 120.0f
         || !FMath::IsFinite(Settings.FinalTipGap) || Settings.FinalTipGap < 0.0f || Settings.FinalTipGap > 100.0f
         || !FMath::IsFinite(PipeWallOffset) || PipeWallOffset < 0.0f)
@@ -656,18 +670,15 @@ bool FMazePipeTrap::Start(AActor* Room, const FMazePipeTrapSettings& Settings,
     for (int32 Side = 0; Side < 2; ++Side)
     {
         FWall& Wall = Walls[Side];
+        FBox SpikeBounds(ForceInit);
         if (!ReadPanels(Room, Wall.Root.Get(), Frames[Side], PipeWallOffset, Settings, Wall.Panels, Error)
-            || !ReadFlippedSpikeBounds(Wall, Side, Settings.SpikeTag, Error))
+            || !ReadFlippedSpikeBounds(Wall, Side, Settings.SpikeTag, SpikeBounds, Error))
         {
             return false;
         }
-        const FVector Center = Wall.OriginalWorld.TransformPosition(Wall.SpikeBounds.GetCenter());
-        const FVector Extent = Wall.SpikeBounds.GetExtent() * Wall.OriginalWorld.GetScale3D().GetAbs();
-        const FQuat Rotation = Wall.OriginalWorld.GetRotation();
-        const double Reach = FMath::Abs(FVector::DotProduct(Rotation.RotateVector(FVector::ForwardVector), Wall.Inward)) * Extent.X
-            + FMath::Abs(FVector::DotProduct(Rotation.RotateVector(FVector::RightVector), Wall.Inward)) * Extent.Y
-            + FMath::Abs(FVector::DotProduct(Rotation.RotateVector(FVector::UpVector), Wall.Inward)) * Extent.Z;
-        const double LeadingTip = FVector::DotProduct(Center - Wall.Pivot, Wall.Inward) + Reach;
+        Wall.ContactSpace = GetGridSpace(Frames[Side], PipeWallOffset);
+        Wall.ContactBounds = SpikeBounds.TransformBy(Wall.OriginalWorld.GetRelativeTransform(Wall.ContactSpace));
+        const double LeadingTip = Wall.ContactBounds.Max.X;
         const double Travel = FVector::DotProduct(Middle - Wall.Pivot, Wall.Inward) - LeadingTip - Settings.FinalTipGap * 0.5;
         if (!FMath::IsFinite(LeadingTip) || LeadingTip <= 0.0 || !FMath::IsFinite(Travel) || Travel <= 0.0)
         {
@@ -675,6 +686,28 @@ bool FMazePipeTrap::Start(AActor* Room, const FMazePipeTrapSettings& Settings,
             return false;
         }
         Wall.Travel = static_cast<float>(Travel);
+
+        // Keep the sweep depth tied to the spike tips. Cover the complete face,
+        // including end recesses inside the authored room area.
+        FBox Coverage(ForceInit);
+        for (const FPanel& Panel : Wall.Panels)
+        {
+            Coverage += Panel.InsideBounds.Min;
+            Coverage += Panel.InsideBounds.Max;
+        }
+        if (IsValid(RoomArea) && RoomArea->GetOwner() == Room)
+        {
+            const FVector Extent = RoomArea->GetUnscaledBoxExtent();
+            const FTransform RoomToWall = RoomArea->GetComponentTransform().GetRelativeTransform(Wall.ContactSpace);
+            if (!Extent.ContainsNaN() && Extent.X > 0.0 && Extent.Y > 0.0 && Extent.Z > 0.0 && !RoomToWall.ContainsNaN())
+            {
+                const FBox RoomBounds = FBox(-Extent, Extent).TransformBy(RoomToWall);
+                Coverage += RoomBounds.Min;
+                Coverage += RoomBounds.Max;
+            }
+        }
+        Wall.ContactBounds += FVector(Wall.ContactBounds.Min.X, Coverage.Min.Y, Coverage.Min.Z);
+        Wall.ContactBounds += FVector(Wall.ContactBounds.Max.X, Coverage.Max.Y, Coverage.Max.Z);
     }
     Owner = Room;
     ActiveSettings = Settings;
@@ -703,7 +736,7 @@ bool FMazePipeTrap::Start(AActor* Room, const FMazePipeTrapSettings& Settings,
 
 void FMazePipeTrap::ApplyPose(float TurnAlpha, float CloseAlpha)
 {
-    const float SmoothTurn = TurnAlpha * TurnAlpha * (3.0f - 2.0f * TurnAlpha);
+    const float TurnProgress = TurnAlpha * TurnAlpha * (3.0f - 2.0f * TurnAlpha);
     for (int32 Side = 0; Side < 2; ++Side)
     {
         FWall& Wall = Walls[Side];
@@ -714,9 +747,9 @@ void FMazePipeTrap::ApplyPose(float TurnAlpha, float CloseAlpha)
             Wall.Root->SetWorldTransform(FTransform(Wall.OriginalWorld.GetRotation(),
                 Wall.OriginalWorld.GetLocation() + Wall.Inward * Travel, Wall.OriginalWorld.GetScale3D()),
                 false, nullptr, ETeleportType::TeleportPhysics);
+            const float Angle = (Side == 0 ? PI : -PI) * TurnProgress;
             for (const FPanel& Pair : Wall.Panels)
             {
-                const float Angle = (Side == 0 ? PI : -PI) * SmoothTurn;
                 if (Pair.Inside.IsValid())
                 {
                     Pair.Inside->SetWorldTransform(MakePose(Pair.InsideWorld, Pair.Pivot, Pair.Axis, Wall.Inward, Angle, Travel),
@@ -747,14 +780,13 @@ bool FMazePipeTrap::HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha)
         {
             continue;
         }
-        const FTransform Transform = Wall.Root->GetComponentTransform();
-        const FQuat Rotation = Transform.GetRotation();
-        const FVector Moved = Wall.Inward * (Wall.Travel * (CloseAlpha - PreviousCloseAlpha));
-        const FVector Center = Transform.TransformPosition(Wall.SpikeBounds.GetCenter()) - Moved * 0.5;
-        const FVector HalfExtent = Wall.SpikeBounds.GetExtent() * Transform.GetScale3D().GetAbs()
-            + Rotation.UnrotateVector(Moved).GetAbs() * 0.5;
+        const float HalfSweep = Wall.Travel * (CloseAlpha - PreviousCloseAlpha) * 0.5f;
+        const FVector Center = Wall.ContactSpace.TransformPosition(Wall.ContactBounds.GetCenter())
+            + Wall.Inward * (Wall.Travel * CloseAlpha - HalfSweep);
+        const FVector HalfExtent = Wall.ContactBounds.GetExtent() + FVector(HalfSweep, 0.0, 0.0);
         TArray<FOverlapResult> Contacts;
-        Owner->GetWorld()->OverlapMultiByObjectType(Contacts, Center, Rotation, Objects, FCollisionShape::MakeBox(HalfExtent), Query);
+        Owner->GetWorld()->OverlapMultiByObjectType(Contacts, Center, Wall.ContactSpace.GetRotation(),
+            Objects, FCollisionShape::MakeBox(HalfExtent), Query);
         for (const FOverlapResult& Contact : Contacts)
         {
             const APawn* Player = Cast<APawn>(Contact.GetActor());
@@ -770,11 +802,9 @@ bool FMazePipeTrap::HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha)
 bool FMazePipeTrap::SwitchToSpikes()
 {
     if (!IsActive()) { return false; }
-    if (bWallsSwitched) { return true; }
+    if (Phase == EMazePipeTrapPhase::Revealing || bWallsSwitched) { return true; }
     if (!Walls[0].Root.IsValid() || !Walls[1].Root.IsValid()) { return false; }
-    ApplyPose(1.0f, 0.0f);
-    Elapsed = ActiveSettings.TurnSeconds + ActiveSettings.PauseAfterTurn;
-    bWallsSwitched = true;
+    // Start() captured the original panel transforms. Advance() samples the turn from those poses.
     Phase = EMazePipeTrapPhase::Revealing;
     return true;
 }
@@ -791,18 +821,26 @@ bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact)
         bHitReported = true;
         return false;
     }
-    const float CloseStart = ActiveSettings.TurnSeconds + ActiveSettings.PauseAfterTurn;
+    const float CloseStart = ActiveSettings.TurnSeconds;
+    // Clamp the elapsed time to the end of the turn while Sequencer owns the player.
+    const float EndTime = bAllowContact ? CloseStart + ActiveSettings.CloseSeconds : CloseStart;
+    if (!bAllowContact && Elapsed >= EndTime) { return false; }
     const float Previous = FMath::Clamp((Elapsed - CloseStart) / ActiveSettings.CloseSeconds, 0.0f, 1.0f);
-    Elapsed = FMath::Min(CloseStart + ActiveSettings.CloseSeconds, Elapsed + DeltaTime);
-    const float Turn = FMath::Clamp(Elapsed / ActiveSettings.TurnSeconds, 0.0f, 1.0f);
+    Elapsed = FMath::Min(EndTime, Elapsed + DeltaTime);
+    const float Turn = FMath::Clamp(Elapsed / CloseStart, 0.0f, 1.0f);
     const float Close = FMath::Clamp((Elapsed - CloseStart) / ActiveSettings.CloseSeconds, 0.0f, 1.0f);
     ApplyPose(Turn, Close);
     bWallsSwitched = Turn >= 1.0f;
+    if (!bAllowContact)
+    {
+        Phase = EMazePipeTrapPhase::Revealing;
+        return false;
+    }
     Phase = Close >= 1.0f ? EMazePipeTrapPhase::Closed
         : Elapsed >= CloseStart ? EMazePipeTrapPhase::Closing : EMazePipeTrapPhase::Flipping;
     // Spike damage begins when the 180 degree turn completes. While closing, the
     // query includes the distance moved since the previous tick, including a hitch.
-    if (bAllowContact && Turn >= 1.0f && HasPlayerContact(Previous, Close))
+    if (bWallsSwitched && HasPlayerContact(Previous, Close))
     {
         bHitReported = true;
         return true;
