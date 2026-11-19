@@ -28,4 +28,7 @@ protected:
 	// Search radius around the controlled pawn to find a navigable point within
 	UPROPERTY(EditAnywhere, Category = "Blackboard")
 	float Radius = 3000.0f;
+
+private:
+	const float MinDistance = 500.0f;
 };
