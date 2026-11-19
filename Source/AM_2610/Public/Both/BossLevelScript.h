@@ -9,6 +9,16 @@
 /**
  * 
  */
+enum class SequenceType
+{
+	None_OR_Empty,
+	LightWrong,
+	LightRight,
+	WorldWrong,
+	BossWrong,
+	BossRight
+};
+
 UCLASS()
 class AM_2610_API ABossLevelScript : public ALevelScriptActor
 {
@@ -26,29 +36,50 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Sequencer")
 	void PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindSequence = false);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
 	TArray<class ULevelSequence*> WrongSequences;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
 	TArray<class ULevelSequence*> RightSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> MadManWrongSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> MadManRightSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> LightWrongSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> LightRightSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> WorldWrongSequences;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
+	TArray<class ULevelSequence*> SpawnSequences; 
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	TArray<class APointLight*> Lights;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	class ULevelSequence* IntroSequence;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences")
 	class ULevelSequence* Last3Sequence;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences")
 	class ULevelSequence* PresentHangmanSequence;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Objects")
 	TObjectPtr<class AWrittingBoard> WrittingBoard;
 
 protected:
 	virtual void BeginPlay() override;
 
 	//When Hangman is the final game
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Objects")
 	TObjectPtr<class AChairForHangman> ChairForHangman;
 
 	//World Components for Input reactions
@@ -86,10 +117,12 @@ private:
 	UFUNCTION()
 	void EndSequenceNow();
 
-	//Boss Handling
-	UFUNCTION()
-	void EditBossFocus(AActor* Target);
+	SequenceType CheckSequenceKind(class ULevelSequence* Sequence);
+	bool CheckSequenceContainer(class ULevelSequence* Sequence, TArray<class ULevelSequence*>& Container);
 
+	//Character Handling
 	UFUNCTION()
-	void BossFocusPlayer();
+	void RefocusPlayer(AActor* Target, FVector Offset = FVector::ZeroVector);
+
+	void FocusBasedOnSequence(ULevelSequence* Sequence);
 };
