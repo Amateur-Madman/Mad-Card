@@ -72,6 +72,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Default)
 	TSubclassOf<UUserWidget> SentenceWordUnderlinedClass;
 
+	UPROPERTY()
 	class AChairForHangman* ChairForHangman;
 
 private:
