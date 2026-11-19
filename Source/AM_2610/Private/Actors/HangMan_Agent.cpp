@@ -10,7 +10,6 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "Actors/HangManController.h"
-#include "../AM_2610.h"
 
 AHangMan_Agent::AHangMan_Agent()
 {
@@ -18,6 +17,12 @@ AHangMan_Agent::AHangMan_Agent()
 	if (DetectionComponent)
 	{
 		DetectionComponent->SetupAttachment(GetRootComponent());
+	}
+
+	PlayerNearSphere = CreateDefaultSubobject<USphereComponent>(TEXT("PlayerNearSphere"));
+	if (PlayerNearSphere)
+	{
+		PlayerNearSphere->SetupAttachment(GetRootComponent());
 	}
 }
 
@@ -39,6 +44,11 @@ void AHangMan_Agent::BeginPlay()
 	if (ProximitySphere)
 	{
 		ProximitySphere->OnComponentBeginOverlap.AddDynamic(this, &AHangMan_Agent::OnProximityOverlapBegin);
+	}
+
+	if (PlayerNearSphere)
+	{
+		PlayerNearSphere->OnComponentBeginOverlap.AddDynamic(this, &AHangMan_Agent::OnPlayerNearOverlapBegin);
 	}
 
 	if (UHangAnimation* HangAnim = Cast<UHangAnimation>(GetMesh()->GetAnimInstance()))
@@ -105,6 +115,19 @@ void AHangMan_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedComp
 			ProximitySphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 	}
+}
+
+void AHangMan_Agent::OnPlayerNearOverlapBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+	int32 RandIndex = FMath::RandRange(1, 5);
+	float Wait = RandIndex;
+
+	GetWorld()->GetTimerManager().SetTimer(GiggleTimer, this, &AHangMan_Agent::GiggleSound, Wait, false);
+}
+
+void AHangMan_Agent::GiggleSound()
+{
+
 }
 
 //Normal gravity to get off of ceiling
