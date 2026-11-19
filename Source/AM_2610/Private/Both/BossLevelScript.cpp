@@ -15,7 +15,6 @@
 #include "LevelSequence.h"
 #include "LevelSequencePlayer.h"
 #include "LevelSequenceActor.h"
-#include "../AM_2610.h"
 
 void ABossLevelScript::BeginPlay()
 {
@@ -75,7 +74,7 @@ void ABossLevelScript::OnCorrectInput()
 	if(RightSequences.Num() > 0)
 	{
 		RandIndex = FMath::RandRange(0, RightSequences.Num() - 1);
-		PlayNextSequence(RightSequences[RandIndex], true);
+		PlayNextSequence(RightSequences[RandIndex], true, true);
 	}
 }
 
@@ -99,7 +98,7 @@ void ABossLevelScript::OnIncorrectInput()
 		if (WrongSequences.Num() > 0)
 		{
 			RandIndex = FMath::RandRange(0, WrongSequences.Num() - 1);
-			PlayNextSequence(WrongSequences[RandIndex], true);
+			PlayNextSequence(WrongSequences[RandIndex], true, true);
 		}
 	}
 }
@@ -116,7 +115,7 @@ void ABossLevelScript::Last3WrongInputs()
 }
 
 // Sequence handling
-void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindSequence)
+void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindBoss, bool BindPlayer)
 {
 	FMovieSceneSequencePlaybackSettings PlaybackSettings;
 
@@ -134,18 +133,26 @@ void ABossLevelScript::PlayNextSequence(class ULevelSequence* SequenceToPlay, bo
 
 	if(SequencePlayer)
 	{
-		if (BindSequence)
+		if (BindBoss)
 		{
-			SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinished);
+			SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinishedBoss);
+		}
+		if (BindPlayer)
+		{
+			SequencePlayer->OnFinished.AddDynamic(this, &ABossLevelScript::OnSequenceFinishedPlayer);
 		}
 		FocusBasedOnSequence(SequenceToPlay);
 		SequencePlayer->Play();
 	}
 }
 
-void ABossLevelScript::OnSequenceFinished()
+void ABossLevelScript::OnSequenceFinishedBoss()
 {
 	MadMan->SetFoucsForRotation(Player);
+}
+
+void ABossLevelScript::OnSequenceFinishedPlayer()
+{
 	Player->BeginViewLock(WrittingBoard);
 }
 
@@ -208,29 +215,24 @@ bool ABossLevelScript::CheckSequenceContainer(ULevelSequence* Sequence, TArray<c
 	return false;
 }
 
-void ABossLevelScript::RefocusPlayer(AActor* Target, FVector Offset)
-{
-	Player->BeginViewLock(Target, Offset);
-}
-
 void ABossLevelScript::FocusBasedOnSequence(ULevelSequence* Sequence)
 {
 	switch (CheckSequenceKind(Sequence))
 	{
 		case SequenceType::LightWrong:
-			RefocusPlayer(WrittingBoard, FVector(0.0f, 90.0f, 0.0f));
+			Player->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, 100.0f));
 			break;
 		case SequenceType::LightRight:
-			RefocusPlayer(WrittingBoard, FVector(0.0f, 90.0f, 0.0f));
+			Player->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, 100.0f));
 			break;
 		case SequenceType::BossWrong:
-			RefocusPlayer(MadMan);
+			Player->BeginViewLock(MadMan);
 			break;
 		case SequenceType::BossRight:
-			RefocusPlayer(MadMan);
+			Player->BeginViewLock(MadMan);
 			break;
 		case SequenceType::WorldWrong:
-			RefocusPlayer(WrittingBoard, FVector(0.0f, -90.0f, 0.0f));
+			Player->BeginViewLock(WrittingBoard, FVector(0.0f, 0.0f, -100.0f));
 			break;
 	}
 }

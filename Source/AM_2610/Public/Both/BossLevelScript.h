@@ -34,7 +34,7 @@ public:
 	void RegisterChair(TObjectPtr<class AChairForHangman> Chair);
 
 	UFUNCTION(BlueprintCallable, Category = "Sequencer")
-	void PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindSequence = false);
+	void PlayNextSequence(class ULevelSequence* SequenceToPlay, bool BindBoss = false, bool BindPlayer = false);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hangman|Sequences|Containers")
 	TArray<class ULevelSequence*> WrongSequences;
@@ -109,7 +109,10 @@ private:
 	class ALevelSequenceActor* SequenceActor;
 
 	UFUNCTION()
-	void OnSequenceFinished();
+	void OnSequenceFinishedBoss();
+
+	UFUNCTION()
+	void OnSequenceFinishedPlayer();
 
 	UFUNCTION()
 	void PresentHangman();
@@ -121,8 +124,5 @@ private:
 	bool CheckSequenceContainer(class ULevelSequence* Sequence, TArray<class ULevelSequence*>& Container);
 
 	//Character Handling
-	UFUNCTION()
-	void RefocusPlayer(AActor* Target, FVector Offset = FVector::ZeroVector);
-
 	void FocusBasedOnSequence(ULevelSequence* Sequence);
 };
