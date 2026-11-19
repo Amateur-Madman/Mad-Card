@@ -279,6 +279,9 @@ void ABasePlayer::BeginPlay()
 	// HUD formats and shows/hides the "Press [] to {}" text from the prompt struct
 	OnInteractPromptChanged.AddDynamic(HUDObject, &UPlayerHUD::SetInteractPrompt);
 
+	// HUD collapses/restores the card carousel when the cards are hidden (Hangman, Pipes)
+	OnCardUIHiddenChanged.AddDynamic(HUDObject, &UPlayerHUD::SetCardUIHidden);
+
 	HUDObject->AddToViewport();
 
 	if (CardHand)
@@ -298,7 +301,7 @@ void ABasePlayer::InputInteract2()
 }
 void ABasePlayer::InputCardNext()
 {
-	if (bIsDead || !CardHand)
+	if (bIsDead || !bCardInputEnabled || !CardHand)
 	{
 		return;
 	}
@@ -307,7 +310,7 @@ void ABasePlayer::InputCardNext()
 
 void ABasePlayer::InputCardPrev()
 {
-	if (bIsDead || !CardHand)
+	if (bIsDead || !bCardInputEnabled || !CardHand)
 	{
 		return;
 	}
@@ -316,7 +319,7 @@ void ABasePlayer::InputCardPrev()
 
 void ABasePlayer::InputCardUse()
 {
-	if (bIsDead || !CardHand)
+	if (bIsDead || !bCardInputEnabled || !CardHand)
 	{
 		return;
 	}
@@ -386,6 +389,36 @@ void ABasePlayer::SetHUDHidden(bool bShouldHide)
 	}
 	bHUDHidden = bShouldHide;
 }
+
+#pragma region Cards
+void ABasePlayer::SetCardInputEnabled(bool bEnabled)
+{
+	if (bEnabled == bCardInputEnabled)
+	{
+		return;
+	}
+
+	bCardInputEnabled = bEnabled;
+	OnCardInputEnabledChanged.Broadcast(bCardInputEnabled);
+}
+
+void ABasePlayer::SetCardUIHidden(bool bShouldHide)
+{
+	if (bShouldHide == bCardUIHidden)
+	{
+		return;
+	}
+
+	bCardUIHidden = bShouldHide;
+	OnCardUIHiddenChanged.Broadcast(bCardUIHidden);
+}
+
+void ABasePlayer::SetCardsSuspended(bool bSuspended)
+{
+	SetCardInputEnabled(!bSuspended);
+	SetCardUIHidden(bSuspended);
+}
+#pragma endregion
 
 void ABasePlayer::HandleHurt(float Percent)
 {

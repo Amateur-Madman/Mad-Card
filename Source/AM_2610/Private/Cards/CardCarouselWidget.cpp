@@ -2,6 +2,7 @@
 
 
 #include "Cards/CardCarouselWidget.h"
+#include "Kismet/GameplayStatics.h"
 
 void UCardCarouselWidget::BindToHand(UCardHandComponent* InHand)
 {
@@ -12,6 +13,7 @@ void UCardCarouselWidget::BindToHand(UCardHandComponent* InHand)
 	{
 		InHand->OnHandChanged.AddDynamic(this, &UCardCarouselWidget::HandleHandChanged);
 		InHand->OnCardSelectionChanged.AddDynamic(this, &UCardCarouselWidget::HandleSelectionChanged);
+		InHand->OnCardCycled.AddDynamic(this, &UCardCarouselWidget::HandleCardCycled);
 		InHand->OnCardUsed.AddDynamic(this, &UCardCarouselWidget::HandleCardUsed);
 		InHand->OnCardRefused.AddDynamic(this, &UCardCarouselWidget::HandleCardRefused);
 	}
@@ -32,6 +34,7 @@ void UCardCarouselWidget::UnbindFromHand()
 	{
 		BoundHand->OnHandChanged.RemoveDynamic(this, &UCardCarouselWidget::HandleHandChanged);
 		BoundHand->OnCardSelectionChanged.RemoveDynamic(this, &UCardCarouselWidget::HandleSelectionChanged);
+		BoundHand->OnCardCycled.RemoveDynamic(this, &UCardCarouselWidget::HandleCardCycled);
 		BoundHand->OnCardUsed.RemoveDynamic(this, &UCardCarouselWidget::HandleCardUsed);
 		BoundHand->OnCardRefused.RemoveDynamic(this, &UCardCarouselWidget::HandleCardRefused);
 	}
@@ -55,6 +58,17 @@ void UCardCarouselWidget::HandleSelectionChanged(int32 SelectedIndex, UBaseCard*
 	else if (Direction < 0)
 	{
 		RestartAnimation(SlidePrevAnim);
+	}
+}
+
+void UCardCarouselWidget::HandleCardCycled(int32 Direction)
+{
+	// Manual cycling only - the auto-advance after a use does not fire OnCardCycled, so it never
+	// stacks a cycle sound on top of the card's own use sound
+	USoundBase* Sound = (Direction < 0 && CyclePrevSound) ? CyclePrevSound.Get() : CycleNextSound.Get();
+	if (Sound)
+	{
+		UGameplayStatics::PlaySound2D(this, Sound, CycleVolume);
 	}
 }
 

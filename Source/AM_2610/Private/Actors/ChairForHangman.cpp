@@ -29,6 +29,7 @@ void AChairForHangman::HandlePickup(AActor* OtherActor, const FHitResult& SweepR
 		if (ABasePlayer* OtherCharacter = Cast<ABasePlayer>(OtherActor))
 		{
             CaughtPlayer = OtherCharacter;
+            CaughtPlayer->SetCardsSuspended(true); // no card casts or card UI while seated for Hangman
             CaughtPlayer->SetActorLocation(ChildActorComponent->GetComponentLocation());
             if(WrittingBoard)
             {

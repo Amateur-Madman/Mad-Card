@@ -6,6 +6,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Animation/WidgetAnimation.h"
 #include "Components/TextBlock.h"
+#include "Sound/SoundBase.h"
 #include "Cards/BaseCard.h"
 #include "Cards/CardHandComponent.h"
 #include "Cards/CardSlotWidget.h"
@@ -44,6 +45,17 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
 	UTextBlock* CounterText;
 
+	// Played when the player cycles to the next card. Optional (null = silent). Set in this WBP's Class Defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<USoundBase> CycleNextSound;
+
+	// Played when cycling to the previous card. Optional: falls back to CycleNextSound.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio")
+	TObjectPtr<USoundBase> CyclePrevSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Audio", meta = (ClampMin = "0.0"))
+	float CycleVolume = 1.f;
+
 	// Selection moved to the next card: animate the row sliding in from the right (translation X +n -> 0)
 	UPROPERTY(Transient, BlueprintReadOnly, meta = (BindWidgetAnimOptional))
 	TObjectPtr<UWidgetAnimation> SlideNextAnim;
@@ -58,6 +70,9 @@ private:
 
 	UFUNCTION()
 	void HandleSelectionChanged(int32 SelectedIndex, UBaseCard* Card, int32 Direction);
+
+	UFUNCTION()
+	void HandleCardCycled(int32 Direction);
 
 	UFUNCTION()
 	void HandleCardUsed(int32 SlotIndex, UBaseCard* Card);
