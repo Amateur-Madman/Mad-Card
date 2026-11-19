@@ -54,11 +54,14 @@ EBTNodeResult::Type UBTTask_FindLocation::ExecuteTask(UBehaviorTreeComponent& Ow
 
 	const FVector Origin = ControlledPawn->GetActorLocation();
 	FNavLocation ResultLocation;
+	const int32 MaxAttempts = 15;
+	int32 Attempts = 0;
 
 	bool bFound = NavSystem->GetRandomPointInNavigableRadius(Origin, Radius, ResultLocation);
-	while (FVector::Dist(Origin, ResultLocation.Location) < MinDistance)
+	while (FVector::Dist(Origin, ResultLocation.Location) < MinDistance && Attempts < MaxAttempts)
 	{
 		bFound = NavSystem->GetRandomPointInNavigableRadius(Origin, Radius, ResultLocation);
+		Attempts++;
 	}
 
 	if (bFound)
