@@ -8,6 +8,7 @@
 #include "Utility/ScannableInterface.h"
 #include "Agent.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFootstep);
 /**
  *
  */
@@ -18,6 +19,9 @@ class AM_2610_API AAgent : public ACharacter, public IScannableInterface
 
 public:
 	AAgent();
+
+	UPROPERTY(BlueprintAssignable, Category = "Events|Audio")
+	FOnFootstep OnFootstep;
 
 	//----------------------------------------------------------------------//
 	// IScannableInterface
@@ -34,6 +38,9 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category = Default)
 	class UCharacterAnimation* CharacterAnimation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
+	class UBaseAgentAudioComponent* BaseAudioComponent;
 
 	//Difficulty Speeds
 	float EasySpeed;

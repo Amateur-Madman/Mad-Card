@@ -47,7 +47,7 @@ private:
 	FTimerHandle GiggleTimer;
 
 	UFUNCTION()
-	void GiggleSound();
+	void PlayGiggleSound();
 
 	UFUNCTION()
 	void Fall();

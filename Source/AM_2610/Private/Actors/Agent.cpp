@@ -8,6 +8,8 @@
 #include "Engine/World.h"
 #include "Enviornment/MazeSaveSubsystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Audio/BaseAgentAudioComponent.h"
+#include "AudioDevice.h"
 
 AAgent::AAgent()
 {
@@ -25,6 +27,8 @@ AAgent::AAgent()
 		ProximitySphere->SetupAttachment(GetRootComponent());
 	}
 
+	BaseAudioComponent = CreateDefaultSubobject<UBaseAgentAudioComponent>(TEXT("BaseAudioComponent"));
+
 	if(GetMesh())
 	{
 		GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.f, 0.0f));
@@ -40,6 +44,10 @@ void AAgent::BeginPlay()
 	{
 		//SetDifficultySpeeds(EasySpeed, HardSpeed);
 		SpeedAccordingToDiff();
+	}
+	if(BaseAudioComponent)
+	{
+		OnFootstep.AddDynamic(BaseAudioComponent, &UBaseAgentAudioComponent::PlayFootstep);
 	}
 
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();

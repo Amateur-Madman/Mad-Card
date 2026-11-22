@@ -7,7 +7,7 @@
 #include "BaseAgentAudioComponent.generated.h"
 
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
+UCLASS( ClassGroup=(Audio), meta=(BlueprintSpawnableComponent) )
 class AM_2610_API UBaseAgentAudioComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -16,13 +16,19 @@ public:
 	// Sets default values for this component's properties
 	UBaseAgentAudioComponent();
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Audio|Footsteps")
+	TArray<TObjectPtr<USoundWave>> FootstepWaves;
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Movement")
+	void PlayFootstep();
+
 protected:
 	// Called when the game starts
 	virtual void BeginPlay() override;
 
-public:	
-	// Called every frame
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+private:
+	UPROPERTY(Transient)
+	TObjectPtr<USoundCue> GeneratedFootstepCue;
 
-		
+	void BuildFootstepSoundCue();
 };

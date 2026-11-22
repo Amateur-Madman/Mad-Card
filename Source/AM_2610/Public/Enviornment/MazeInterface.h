@@ -33,6 +33,6 @@ public:
     void SetMazeDoorLocked(FName DoorTag, bool bLocked);
 
     // Let each enemy react when the player enters or leaves a room.
-    UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "Maze|Room")
+    UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Maze|Room")
     void PlayerRoomStateChanged(AActor* Player, bool bIsInRoom);
 };

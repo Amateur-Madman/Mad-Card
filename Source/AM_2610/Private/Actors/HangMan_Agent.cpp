@@ -122,10 +122,10 @@ void AHangMan_Agent::OnPlayerNearOverlapBegin(UPrimitiveComponent* OverlappedCom
 	int32 RandIndex = FMath::RandRange(1, 5);
 	float Wait = RandIndex;
 
-	GetWorld()->GetTimerManager().SetTimer(GiggleTimer, this, &AHangMan_Agent::GiggleSound, Wait, false);
+	GetWorld()->GetTimerManager().SetTimer(GiggleTimer, this, &AHangMan_Agent::PlayGiggleSound, Wait, false);
 }
 
-void AHangMan_Agent::GiggleSound()
+void AHangMan_Agent::PlayGiggleSound()
 {
 
 }
