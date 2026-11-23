@@ -63,6 +63,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Trap")
     FMazePipeTrapSettings PipeTrapSettings;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeTurnSound;
+
+    // Assign a non-looping Sound Wave for the blackout cue.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeWallTurnSound;
+
+    // Assign a looping Sound Wave. Playback stops when the walls stop moving.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeWallCloseSound;
+
     // Sequencer animates yaw relative to the console heading and absolute pitch.
     // The existing first-person camera remains active; no camera cut is used.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "Puzzle|Pipes|Trap|Cinematic")
@@ -85,8 +96,8 @@ public:
     UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes|Trap")
     APlayerController* GetPipeTrapPlayerController() const { return PipeTrapReveal.GetController(); }
 
-    // Call at the blackout key. Switches each pair to the spike side immediately;
-    // walls remain stationary and harmless until the final unlock event.
+    // Call at the blackout key to start the panel flip and its one-shot sound.
+    // The walls slide inward after the turn and the final unlock event.
     UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes|Trap")
     bool SwitchPipeTrapWalls();
 

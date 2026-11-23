@@ -1166,6 +1166,13 @@ bool UMazePuzzleComponent::RotatePipeCell(bool bRightWall, int32 CellIndex, bool
             Actor->ConfigureIndicators(Layout.Cells[CellIndex], Frame);
         }
     }
+    UWorld* World = GetWorld();
+    if (IsValid(PipeTurnSound) && IsValid(World) && World->IsGameWorld())
+    {
+        const float PitchMultiplier = FMath::FRandRange(0.90f, 1.10f);
+        UGameplayStatics::PlaySoundAtLocation(this, PipeTurnSound.Get(), Frame.GetCellCenter(CellIndex),
+            1.0f, PitchMultiplier);
+    }
     return true;
 }
 
@@ -2217,7 +2224,7 @@ bool UMazePuzzleComponent::SwitchPipeTrapWalls()
             return false;
         }
     }
-    const bool bSwitched = PipeTrap.SwitchToSpikes();
+    const bool bSwitched = PipeTrap.SwitchToSpikes(PipeWallTurnSound.Get());
     if (bSwitched) { ClearPipeLeakSteam(); }
     SetComponentTickEnabled(true);
     return bSwitched;
@@ -2271,6 +2278,7 @@ bool UMazePuzzleComponent::LockPipeTrapPlayer(APawn* Player)
 
 void UMazePuzzleComponent::ReleasePipeTrapPlayer()
 {
+    PipeTrap.StopMovementAudio();
     const bool bWasLocked = PipeTrapReveal.IsPlayerLocked();
     PipeTrapReveal.Clear();
     bPipeTrapUseSequenceLook = false;
@@ -2304,7 +2312,7 @@ void UMazePuzzleComponent::AdvancePipeTrap(float DeltaTime)
         SetComponentTickEnabled(false);
         return;
     }
-    const bool bHitPlayer = PipeTrap.Advance(DeltaTime);
+    const bool bHitPlayer = PipeTrap.Advance(DeltaTime, true, PipeWallCloseSound.Get());
     PipeTrapPhase = PipeTrap.GetPhase();
     SetComponentTickEnabled(PipeTrap.IsActive());
     if (bHitPlayer)
