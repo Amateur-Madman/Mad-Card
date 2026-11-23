@@ -7,7 +7,6 @@
 #include "Actors/BasePlayer.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Both/WeepAnimation.h"
-#include "../AM_2610.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "Actors/WeepingAngelController.h"
@@ -16,6 +15,9 @@
 
 AWeepingAngel_Agent::AWeepingAngel_Agent()
 {
+	EasySpeed = 450.0f;
+	HardSpeed = 500.0f;
+
 	CanKillPlayer = true;
 
 	StimComponent = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("PerceptionStimulus"));
@@ -37,9 +39,6 @@ void AWeepingAngel_Agent::PlayerSeesMe_Implementation(bool bIsSeen)
 
 void AWeepingAngel_Agent::BeginPlay()
 {
-	EasySpeed = 450.0f;
-	HardSpeed = 500.0f;
-
 	Super::BeginPlay();
 
 	if (ProximitySphere)

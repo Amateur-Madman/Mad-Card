@@ -60,7 +60,7 @@ public:
 	FOnNewLocation OnNewLocation;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Default)
-	FName ActionSlotName;
+	FName ActionSlotName = "Action";
 
 	virtual void NativeInitializeAnimation() override;
 

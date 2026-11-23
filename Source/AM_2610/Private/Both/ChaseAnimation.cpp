@@ -24,3 +24,17 @@ void UChaseAnimation::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 		Direction = 0.f;
 	}
 }
+
+void UChaseAnimation::AnimRoar()
+{
+	if (RoarAsset)
+	{
+		PlaySlotAnimationAsDynamicMontage(RoarAsset, ActionSlotName);
+		GetWorld()->GetTimerManager().SetTimer(RoarTimer, this, &UChaseAnimation::RoarEnd, RoarAsset->GetPlayLength(), false);
+	}
+}
+
+void UChaseAnimation::RoarEnd()
+{
+	OnRoarEnded.Broadcast();
+}
