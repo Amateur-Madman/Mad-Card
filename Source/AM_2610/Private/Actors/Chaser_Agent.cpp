@@ -8,7 +8,6 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Both/ChaseAnimation.h"
 
-
 AChaser_Agent::AChaser_Agent()
 {
 	HardSpeed = 60.0f;
