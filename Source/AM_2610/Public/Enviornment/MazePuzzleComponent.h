@@ -329,7 +329,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
     FLinearColor CompletedLightColor = FLinearColor(0.02f, 1.0f, 0.05f);
 
-    // Existing whole-room overlap box. Keep it around the room and through the doorway.
+    // Whole-room overlap box for safe entry, re-entry, and sealing after completion.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Departure")
     FName CompletedExitAreaTag = TEXT("RoomArea");
 
@@ -595,6 +595,7 @@ private:
 
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;
+    void ClearSpawnedWeepingAngels();
     void ClearSpawnedActors();
 
     UPROPERTY(Transient)
@@ -608,9 +609,12 @@ private:
     TWeakObjectPtr<UBoxComponent> CompletedExitArea;
     TWeakObjectPtr<APawn> CompletedExitPlayer;
     bool bObservedPlayerInPuzzleArea = false;
+    bool bRoomVisitActive = false;
     FTimerHandle CompletedExitTimer;
     void PrepareCompletedExitArea();
     void ClearCompletedExitArea();
+    bool ShouldWatchRoomVisit() const;
+    bool UpdateRoomVisit(const UBoxComponent& Area);
     void QueueCompletedExitCheck();
     void CheckCompletedPuzzleExit();
 
