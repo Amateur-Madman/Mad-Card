@@ -51,7 +51,7 @@ void AChaser_Agent::BeginPlay()
 		ProximitySphere->OnComponentBeginOverlap.AddDynamic(this, &AChaser_Agent::OnProximityOverlapBegin);
 	}
 
-	if (UChaseAnimation* ChaseAnim = Cast<UChaseAnimation>(CharacterAnimation))
+	if (UChaseAnimation* ChaseAnim = Cast<UChaseAnimation>(GetMesh()->GetAnimInstance()))
 	{
 		ChaseAnim->OnRoarEnded.AddDynamic(this, &AChaser_Agent::TrackStar);
 	}
@@ -73,7 +73,7 @@ void AChaser_Agent::OnProximityOverlapBegin(UPrimitiveComponent* OverlappedCompo
 
 void AChaser_Agent::RoarAtSpeedThreshold()
 {
-	if (UChaseAnimation* ChaseAnim = Cast<UChaseAnimation>(CharacterAnimation))
+	if (UChaseAnimation* ChaseAnim = Cast<UChaseAnimation>(GetMesh()->GetAnimInstance()))
 	{
 		PlayRoarSound();
 		ChaseAnim->AnimRoar();

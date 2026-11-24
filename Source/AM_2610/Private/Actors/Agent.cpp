@@ -45,16 +45,12 @@ void AAgent::BeginPlay()
 		//SetDifficultySpeeds(EasySpeed, HardSpeed);
 		SpeedAccordingToDiff();
 	}
+
 	if(BaseAudioComponent)
 	{
 		OnFootstep.AddDynamic(BaseAudioComponent, &UBaseAgentAudioComponent::PlayFootstep);
 	}
 
-	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
-	if(AnimInstance)
-	{
-		CharacterAnimation = Cast<UCharacterAnimation>(AnimInstance);
-	}
 	if (ScanOverlayMaterial)
 	{
 		ScanMID = UMaterialInstanceDynamic::Create(ScanOverlayMaterial, this);

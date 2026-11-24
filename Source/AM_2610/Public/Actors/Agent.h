@@ -36,9 +36,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly)
 	class USphereComponent* ProximitySphere;
 
-	UPROPERTY(BlueprintReadOnly, Category = Default)
-	class UCharacterAnimation* CharacterAnimation;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Default)
 	class UBaseAgentAudioComponent* BaseAudioComponent;
 
