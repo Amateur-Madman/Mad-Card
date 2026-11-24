@@ -58,14 +58,27 @@ namespace
         return INDEX_NONE;
     }
 
-    bool HasChamberSlot(const FMazePipeLayout& Layout, const TArray<int32>& Path, int32 ExtraOutletCount)
+    bool HasChamberClearance(const FMazePipeLayout& Layout, int32 Chamber, int32 Endpoint)
     {
-        const int32 LastCandidate = Path.Num() - (ExtraOutletCount > 0 ? 3 : 2);
-        for (int32 Index = 1; Index <= LastCandidate; ++Index)
+        const int32 ColumnsApart = FMath::Abs(Chamber % Layout.Columns - Endpoint % Layout.Columns);
+        const int32 RowsApart = FMath::Abs(Chamber / Layout.Columns - Endpoint / Layout.Columns);
+        return ColumnsApart > 1 || RowsApart > 1;
+    }
+
+    bool IsChamberCandidate(const FMazePipeLayout& Layout, const TArray<int32>& Path, int32 Position)
+    {
+        const int32 Chamber = Path[Position];
+        const int32 Before = DirectionTo(Layout, Chamber, Path[Position - 1]);
+        const int32 After = DirectionTo(Layout, Chamber, Path[Position + 1]);
+        return Before == (After + 2) % 4 && HasChamberClearance(Layout, Chamber, Path[0])
+            && HasChamberClearance(Layout, Chamber, Path.Last());
+    }
+
+    bool HasChamberSlot(const FMazePipeLayout& Layout, const TArray<int32>& Path)
+    {
+        for (int32 Position = 2; Position < Path.Num() - 2; ++Position)
         {
-            const int32 Before = DirectionTo(Layout, Path[Index], Path[Index - 1]);
-            const int32 After = DirectionTo(Layout, Path[Index], Path[Index + 1]);
-            if (Before == (After + 2) % 4)
+            if (IsChamberCandidate(Layout, Path, Position))
             {
                 return true;
             }
@@ -85,7 +98,7 @@ namespace
         if (Current == Goal)
         {
             return Path.Num() >= Settings.MinimumPathCells
-                && (!bNeedsChamber || HasChamberSlot(Layout, Path, Settings.ExtraOutletCount));
+                && (!bNeedsChamber || HasChamberSlot(Layout, Path));
         }
 
         if (Path.Num() >= Settings.MaximumPathCells
@@ -126,7 +139,8 @@ namespace
 
     bool HasEndpointClearance(const FMazePipeGridSettings& Settings, const FMazePipeLayout& Layout, int32 CellIndex)
     {
-        if (GridDistance(Layout, Layout.InletIndex, CellIndex) < Settings.MinimumEndpointDistance)
+        if (GridDistance(Layout, Layout.InletIndex, CellIndex) < Settings.MinimumEndpointDistance
+            || !HasChamberClearance(Layout, Layout.ChamberIndex, CellIndex))
         {
             return false;
         }
@@ -217,6 +231,46 @@ namespace
             }
         }
         return true;
+    }
+
+    void AddOptionalFourWayLoop(const FMazePipeLayout& Layout, TArray<uint8>& Masks, FRandomStream Random)
+    {
+        const uint8 AllPorts = BasePorts(EMazePipePiece::Cross);
+        if (Masks.Contains(AllPorts) || Random.RandRange(0, 2) == 0)
+        {
+            return;
+        }
+
+        const int32 FirstCell = Random.RandRange(0, Masks.Num() - 1);
+        for (int32 Offset = 0; Offset < Masks.Num(); ++Offset)
+        {
+            const int32 Junction = (FirstCell + Offset) % Masks.Num();
+            for (int32 Direction = 0; Direction < 4; ++Direction)
+            {
+                const int32 Adjacent = (Direction + 1) % 4;
+                const int32 LoopPorts = (1 << Direction) | (1 << Adjacent);
+                if (Masks[Junction] != (AllPorts ^ LoopPorts))
+                {
+                    continue;
+                }
+
+                const int32 First = FMazePipePuzzle::GetNeighbor(Layout, Junction, Direction);
+                const int32 Last = FMazePipePuzzle::GetNeighbor(Layout, Junction, Adjacent);
+                const int32 Corner = FMazePipePuzzle::GetNeighbor(Layout, First, Adjacent);
+                if (First == INDEX_NONE || Last == INDEX_NONE || Corner == INDEX_NONE
+                    || Masks[First] != 0 || Masks[Last] != 0 || Masks[Corner] != 0)
+                {
+                    continue;
+                }
+
+                // This loop shares one junction with the route, keeping 004 mandatory.
+                AddEdge(Layout, Masks, Junction, First);
+                AddEdge(Layout, Masks, First, Corner);
+                AddEdge(Layout, Masks, Corner, Last);
+                AddEdge(Layout, Masks, Last, Junction);
+                return;
+            }
+        }
     }
 
     bool AssignPiece(FMazePipeCell& Cell, uint8 Mask)
@@ -471,12 +525,9 @@ bool FMazePipePuzzle::Generate(const FMazePipeGridSettings& Settings, int32 Seed
         }
 
         TArray<int32> ChamberChoices;
-        const int32 LastChamber = Layout.MainPath.Num() - (Settings.ExtraOutletCount > 0 ? 3 : 2);
-        for (int32 Position = 1; Position <= LastChamber; ++Position)
+        for (int32 Position = 2; Position < Layout.MainPath.Num() - 2; ++Position)
         {
-            const int32 Before = DirectionTo(Layout, Layout.MainPath[Position], Layout.MainPath[Position - 1]);
-            const int32 After = DirectionTo(Layout, Layout.MainPath[Position], Layout.MainPath[Position + 1]);
-            if (Before == (After + 2) % 4)
+            if (IsChamberCandidate(Layout, Layout.MainPath, Position))
             {
                 ChamberChoices.Add(Position);
             }
@@ -497,6 +548,8 @@ bool FMazePipePuzzle::Generate(const FMazePipeGridSettings& Settings, int32 Seed
             }
             if (AddBranches(Settings, Layout, Masks, ChamberPosition, Random, RemainingSearch))
             {
+                // The optional shape uses a copy of the board's random stream.
+                AddOptionalFourWayLoop(Layout, Masks, Random);
                 bBuiltSolution = true;
                 break;
             }

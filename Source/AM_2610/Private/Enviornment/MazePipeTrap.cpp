@@ -2,6 +2,7 @@
 
 #include "CollisionQueryParams.h"
 #include "CollisionShape.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -16,8 +17,10 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PawnMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "Math/RotationMatrix.h"
+#include "Sound/SoundBase.h"
 
 USceneComponent* FMazePipeTrap::FindRoot(AActor* Room, FName Tag, FString& Error)
 {
@@ -799,17 +802,48 @@ bool FMazePipeTrap::HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha)
     return false;
 }
 
-bool FMazePipeTrap::SwitchToSpikes()
+UAudioComponent* FMazePipeTrap::PlayWallSound(USoundBase* Sound) const
+{
+    AActor* Room = Owner.Get();
+    USceneComponent* Root = Room ? Room->GetRootComponent() : nullptr;
+    if (!IsValid(Sound) || !IsValid(Root))
+    {
+        return nullptr;
+    }
+
+    const FVector Location = (Walls[0].Pivot + Walls[1].Pivot) * 0.5;
+    return UGameplayStatics::SpawnSoundAttached(Sound, Root, NAME_None, Location,
+        EAttachLocation::KeepWorldPosition, /*bStopWhenAttachedToDestroyed=*/true,
+        1.0f, 1.0f, 0.0f, nullptr, nullptr, /*bAutoDestroy=*/true);
+}
+
+void FMazePipeTrap::StopWallSound(TWeakObjectPtr<UAudioComponent>& Playback)
+{
+    if (UAudioComponent* Audio = Playback.Get())
+    {
+        Audio->Stop();
+    }
+    Playback.Reset();
+}
+
+void FMazePipeTrap::StopMovementAudio()
+{
+    StopWallSound(TurnAudio);
+    StopWallSound(CloseAudio);
+}
+
+bool FMazePipeTrap::SwitchToSpikes(USoundBase* TurnSound)
 {
     if (!IsActive()) { return false; }
     if (Phase == EMazePipeTrapPhase::Revealing || bWallsSwitched) { return true; }
     if (!Walls[0].Root.IsValid() || !Walls[1].Root.IsValid()) { return false; }
     // Start() captured the original panel transforms. Advance() samples the turn from those poses.
     Phase = EMazePipeTrapPhase::Revealing;
+    TurnAudio = PlayWallSound(TurnSound);
     return true;
 }
 
-bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact)
+bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact, USoundBase* CloseSound)
 {
     if (!IsActive() || !FMath::IsFinite(DeltaTime) || DeltaTime < 0.0f)
     {
@@ -818,6 +852,7 @@ bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact)
     if (!Owner.IsValid() || !Owner->GetWorld() || !Owner->GetWorld()->IsGameWorld()
         || !Walls[0].Root.IsValid() || !Walls[1].Root.IsValid())
     {
+        StopMovementAudio();
         bHitReported = true;
         return false;
     }
@@ -842,14 +877,24 @@ bool FMazePipeTrap::Advance(float DeltaTime, bool bAllowContact)
     // query includes the distance moved since the previous tick, including a hitch.
     if (bWallsSwitched && HasPlayerContact(Previous, Close))
     {
+        StopWallSound(CloseAudio);
         bHitReported = true;
         return true;
+    }
+    if (Previous == 0.0f && Close > 0.0f && Close < 1.0f)
+    {
+        CloseAudio = PlayWallSound(CloseSound);
+    }
+    else if (Previous < 1.0f && Close >= 1.0f)
+    {
+        StopWallSound(CloseAudio);
     }
     return false;
 }
 
 void FMazePipeTrap::ClearMotion()
 {
+    StopMovementAudio();
     if (bStarted)
     {
         for (FWall& Wall : Walls)

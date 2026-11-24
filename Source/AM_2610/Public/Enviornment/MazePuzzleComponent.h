@@ -63,6 +63,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Trap")
     FMazePipeTrapSettings PipeTrapSettings;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeTurnSound;
+
+    // Assign a non-looping Sound Wave for the blackout cue.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeWallTurnSound;
+
+    // Assign a looping Sound Wave. Playback stops when the walls stop moving.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Pipes|Audio")
+    TObjectPtr<USoundBase> PipeWallCloseSound;
+
     // Sequencer animates yaw relative to the console heading and absolute pitch.
     // The existing first-person camera remains active; no camera cut is used.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Interp, Category = "Puzzle|Pipes|Trap|Cinematic")
@@ -85,8 +96,8 @@ public:
     UFUNCTION(BlueprintPure, Category = "Puzzle|Pipes|Trap")
     APlayerController* GetPipeTrapPlayerController() const { return PipeTrapReveal.GetController(); }
 
-    // Call at the blackout key. Switches each pair to the spike side immediately;
-    // walls remain stationary and harmless until the final unlock event.
+    // Call at the blackout key to start the panel flip and its one-shot sound.
+    // The walls slide inward after the turn and the final unlock event.
     UFUNCTION(BlueprintCallable, Category = "Puzzle|Pipes|Trap")
     bool SwitchPipeTrapWalls();
 
@@ -318,7 +329,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Door Status")
     FLinearColor CompletedLightColor = FLinearColor(0.02f, 1.0f, 0.05f);
 
-    // Existing whole-room overlap box. Keep it around the room and through the doorway.
+    // Whole-room overlap box for safe entry, re-entry, and sealing after completion.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Departure")
     FName CompletedExitAreaTag = TEXT("RoomArea");
 
@@ -584,6 +595,7 @@ private:
 
     bool CanUnlockButtons(const TArray<APawn*>& First, const TArray<APawn*>& Second) const;
     bool IsEligibleOccupant(APawn* Pawn) const;
+    void ClearSpawnedWeepingAngels();
     void ClearSpawnedActors();
 
     UPROPERTY(Transient)
@@ -597,9 +609,12 @@ private:
     TWeakObjectPtr<UBoxComponent> CompletedExitArea;
     TWeakObjectPtr<APawn> CompletedExitPlayer;
     bool bObservedPlayerInPuzzleArea = false;
+    bool bRoomVisitActive = false;
     FTimerHandle CompletedExitTimer;
     void PrepareCompletedExitArea();
     void ClearCompletedExitArea();
+    bool ShouldWatchRoomVisit() const;
+    bool UpdateRoomVisit(const UBoxComponent& Area);
     void QueueCompletedExitCheck();
     void CheckCompletedPuzzleExit();
 

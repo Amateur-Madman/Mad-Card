@@ -7,12 +7,14 @@
 class AActor;
 class APawn;
 class APlayerController;
+class UAudioComponent;
 class UBoxComponent;
 class UPawnMovementComponent;
 class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 class UPrimitiveComponent;
 class USceneComponent;
+class USoundBase;
 class UStaticMesh;
 struct FMazePipeGridFrame;
 
@@ -122,12 +124,13 @@ public:
 
     // While Sequencer owns the player, only the turn can advance.
     // Returns true once on player-body contact. The puzzle component owns TriggerLose.
-    bool Advance(float DeltaTime, bool bAllowContact = true);
+    bool Advance(float DeltaTime, bool bAllowContact = true, USoundBase* CloseSound = nullptr);
     // Sequencer calls this under blackout. No closing or contact is advanced here.
-    bool SwitchToSpikes();
+    bool SwitchToSpikes(USoundBase* TurnSound = nullptr);
     bool AreWallsSwitched() const { return bWallsSwitched; }
     bool IsActive() const { return bStarted && !bHitReported; }
     EMazePipeTrapPhase GetPhase() const { return Phase; }
+    void StopMovementAudio();
     void Clear();
 
     // Rotate a panel about its pair's mesh center even if its component pivot is offset.
@@ -182,6 +185,8 @@ private:
     bool bWallsSwitched = false;
     bool bHitReported = false;
     EMazePipeTrapPhase Phase = EMazePipeTrapPhase::Idle;
+    TWeakObjectPtr<UAudioComponent> TurnAudio;
+    TWeakObjectPtr<UAudioComponent> CloseAudio;
     TArray<TWeakObjectPtr<UInstancedStaticMeshComponent>> GeneratedSpikes;
 
     static bool IsSpike(const USceneComponent* Component, const USceneComponent* Root, FName Tag);
@@ -193,14 +198,16 @@ private:
         float PipeWallOffset, const FMazePipeTrapSettings& Settings, TArray<FPanel>& Panels, FString& Error);
     static int32 FindPanelIndex(const TArray<FPanel>& Panels, const FVector& Point, bool bOutside);
     static bool ReadFlippedSpikeBounds(const FWall& Wall, int32 Side, FName SpikeTag, FBox& Bounds, FString& Error);
+    UAudioComponent* PlayWallSound(USoundBase* Sound) const;
+    static void StopWallSound(TWeakObjectPtr<UAudioComponent>& Playback);
     void ClearMotion();
     bool ReadWall(AActor* Room, FName Tag, FName SpikeTag, FWall& Wall, FString& Error);
     void ApplyPose(float TurnAlpha, float CloseAlpha);
     bool HasPlayerContact(float PreviousCloseAlpha, float CloseAlpha) const;
 };
 
-// Synchronous console input lock. Sequencer owns all cinematic timing, lights,
-// sound and look keys. No fade, release timer or camera cut is performed here.
+// Synchronous console input lock. Sequencer owns cinematic timing, lights and
+// look keys. No fade, release timer or camera cut is performed here.
 class AM_2610_API FMazePipeTrapReveal
 {
 public:

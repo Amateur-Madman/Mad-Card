@@ -35,6 +35,9 @@ protected:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	class UVerticalBox* ButtonBox;
 
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
+	class UTextBlock* SecondChancesText;
+
 	// Cached once in NativeConstruct
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "GameFlow")
 	class UBaseGameInstance* GameInstance;

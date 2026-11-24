@@ -102,6 +102,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Maze|Save")
     bool RespawnPlayer();
 
+    bool CanReturnToMainMenu() const;
+
     UFUNCTION(BlueprintCallable, Category = "Maze|Save")
     bool ReturnToMainMenu();
 

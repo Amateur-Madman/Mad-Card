@@ -7,6 +7,7 @@
 #include "Actors/BasePlayer.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Both/ChaseAnimation.h"
+#include "Both/CharacterAnimation.h"
 
 
 AChaser_Agent::AChaser_Agent()

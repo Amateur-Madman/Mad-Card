@@ -633,30 +633,16 @@ bool UMazeSaveSubsystem::HandlePlayerDeath(APawn* Player)
         return Fail(TEXT("Configure the gameplay and main menu map names before handling death."));
     }
 
-    // A final Hard death goes to the menu. Other deaths wait for Play Again.
-    if (bDeathReturnsToMenu)
-    {
-        bTransitionPending = true;
-        GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UMazeSaveSubsystem::ProcessPendingDeath);
-    }
-
     OnRespawnStateChanged.Broadcast(CanRespawnPlayer());
     return true;
 }
 
 bool UMazeSaveSubsystem::CanRespawnPlayer() const
 {
-    const bool bHasRun = IsValid(ActiveRun);
-    const bool bHasCheckpoint = bHasRun && ActiveRun->Checkpoint.bValid;
-    const bool bHasMap = bHasRun && !ActiveRun->GameplayLevel.IsNone();
-
-    // Temporary: show which condition is keeping Play Again disabled.
-    const bool bCanRespawn = bHasCheckpoint && bHasMap && GetWorld() && bDeathPending && !bDeathReturnsToMenu && !PendingDeathLevel.IsNone() && !bTransitionPending && !bRestorePending && !bRestoreFailed && !bSaving;
-
-    UE_LOG(LogTemp, Warning, TEXT("Maze respawn: Allowed=%d Run=%d Checkpoint=%d Map=%d Death=%d Menu=%d PendingMap=%d Transition=%d Restore=%d Failed=%d Saving=%d"),
-        bCanRespawn, bHasRun, bHasCheckpoint, bHasMap, bDeathPending, bDeathReturnsToMenu, !PendingDeathLevel.IsNone(), bTransitionPending, bRestorePending, bRestoreFailed, bSaving);
-
-    return bCanRespawn;
+    // The death that spends the last charge can still retry from its checkpoint.
+    return IsValid(ActiveRun) && ActiveRun->Checkpoint.bValid && !ActiveRun->GameplayLevel.IsNone()
+        && GetWorld() && bDeathPending && !bDeathReturnsToMenu && !PendingDeathLevel.IsNone()
+        && !bTransitionPending && !bRestorePending && !bRestoreFailed && !bSaving;
 }
 
 bool UMazeSaveSubsystem::RespawnPlayer()
@@ -673,9 +659,15 @@ bool UMazeSaveSubsystem::RespawnPlayer()
     return true;
 }
 
+bool UMazeSaveSubsystem::CanReturnToMainMenu() const
+{
+    return IsValid(ActiveRun) && !ActiveRun->MainMenuLevel.IsNone() && GetWorld()
+        && !bSaving && !bTransitionPending && !bRestorePending;
+}
+
 bool UMazeSaveSubsystem::ReturnToMainMenu()
 {
-    if (!IsValid(ActiveRun) || ActiveRun->MainMenuLevel.IsNone() || !GetWorld() || bSaving || bTransitionPending || bRestorePending)
+    if (!CanReturnToMainMenu())
     {
         return false;
     }
@@ -779,4 +771,4 @@ void UMazeSaveSubsystem::ReportRestoreTimeout()
     bRestoreFailed = true;
     OnLoadFinished.Broadcast(false);
     Fail(TEXT("Player/save setup timed out. Add MazePlayerSaveComponent to the possessed player, check MazeGenerator, and add PlayerRespawn to both start rooms."));
-}   
+}

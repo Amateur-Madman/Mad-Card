@@ -1,6 +1,3 @@
-MAD_CARD_SEEDS|5|PressurePlates|hard|5|D3B5FDD5
-16|PressurePlates||0|1.360573|A3614C83
-21|PressurePlates|BP_TrapRoom|2|1.265591|3BEEE363
-35|PressurePlates|BP_TrapRoom|1|1.359198|3BEEE363
-48|PressurePlates|BP_CardRoom|2|1.369133|3BEEE363
-58|PressurePlates||0|1.479601|3BEEE363
+MAD_CARD_SEEDS|5|PressurePlates|hard|2|AF79274E
+16|PressurePlates||0|1.517752|A3614C83
+21|PressurePlates|BP_TrapRoom|2|1.599306|3BEEE363
