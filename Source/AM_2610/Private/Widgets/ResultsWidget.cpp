@@ -6,6 +6,7 @@
 #include "Utility/BaseGameInstance.h"
 #include "Components/WidgetSwitcher.h"
 #include "Components/HorizontalBox.h"
+#include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Enviornment/MazeSaveSubsystem.h"
 
@@ -111,6 +112,7 @@ void UResultsWidget::HandleReturnToMainMenuClicked()
 
 void UResultsWidget::HandleRespawnStateChanged(bool bCanRespawn)
 {
+	const UMazeSaveSubsystem* SaveSystem = MazeSaveSystem.Get();
 	if (PlayAgainButton)
 	{
 		PlayAgainButton->SetIsEnabled(bCanRespawn);
@@ -118,8 +120,21 @@ void UResultsWidget::HandleRespawnStateChanged(bool bCanRespawn)
 
 	if (ReturnToMainMenu)
 	{
-		const UMazeSaveSubsystem* SaveSystem = MazeSaveSystem.Get();
-		ReturnToMainMenu->SetIsEnabled(IsValid(SaveSystem) ? !SaveSystem->IsSaving() && (!SaveSystem->IsBusy() || bCanRespawn) : IsValid(GameInstance));
+		ReturnToMainMenu->SetIsEnabled(IsValid(SaveSystem) ? SaveSystem->CanReturnToMainMenu() : IsValid(GameInstance));
+	}
+
+	if (SecondChancesText)
+	{
+		const bool bShowCount = IsValid(SaveSystem) && SaveSystem->GetDifficulty() == EMazeDifficulty::Hard;
+		if (bShowCount)
+		{
+			// Count the retry granted for this death along with any unused charges.
+			const int32 SecondChancesLeft = SaveSystem->GetSecondChanceCharges() + (bCanRespawn ? 1 : 0);
+			SecondChancesText->SetText(FText::Format(
+				NSLOCTEXT("ResultsWidget", "SecondChancesLeft", "Second Chances Left: {0}"),
+				FText::AsNumber(SecondChancesLeft)));
+		}
+		SecondChancesText->SetVisibility(bShowCount ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
 }
 
